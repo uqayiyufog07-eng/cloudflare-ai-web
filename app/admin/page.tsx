@@ -87,7 +87,7 @@ export default function AdminPage() {
 
   if (state === "unconfigured") {
     return (
-      <div className="flex h-full items-center justify-center px-4">
+      <div className="flex h-svh items-center justify-center px-4">
         <div className="max-w-md space-y-2 text-center">
           <KeyRound className="text-muted-foreground mx-auto" aria-hidden />
           <h1 className="text-lg font-semibold">Admin is not configured</h1>
@@ -102,7 +102,7 @@ export default function AdminPage() {
 
   if (state === "unauthenticated") {
     return (
-      <div className="flex h-full items-center justify-center px-4">
+      <div className="flex h-svh items-center justify-center px-4">
         <div className="w-full max-w-xs space-y-4">
           <div className="space-y-1 text-center">
             <h1 className="text-lg font-semibold">Admin console</h1>
@@ -139,8 +139,8 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <nav className="flex gap-1 overflow-x-auto px-2 py-2 lg:hidden">
+    <div className="flex h-svh flex-col lg:flex-row">
+      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b px-2 py-2 lg:hidden">
         {SECTIONS.map(({ id, label, icon: Icon }) => (
           <Button
             key={id}
@@ -155,22 +155,22 @@ export default function AdminPage() {
         ))}
       </nav>
 
-      <div className="mx-auto flex w-full max-w-5xl flex-1 overflow-hidden">
-        <aside className="hidden w-56 shrink-0 space-y-1 border-r p-4 lg:block">
-          {SECTIONS.map(({ id, label, icon: Icon }) => (
-            <Button
-              key={id}
-              variant={section === id ? "secondary" : "ghost"}
-              className="w-full justify-start"
-              onClick={() => setSection(id)}
-            >
-              <Icon aria-hidden />
-              {label}
-            </Button>
-          ))}
-        </aside>
+      <aside className="hidden w-56 shrink-0 flex-col gap-1 border-r p-4 lg:flex">
+        {SECTIONS.map(({ id, label, icon: Icon }) => (
+          <Button
+            key={id}
+            variant={section === id ? "secondary" : "ghost"}
+            className="w-full justify-start"
+            onClick={() => setSection(id)}
+          >
+            <Icon aria-hidden />
+            {label}
+          </Button>
+        ))}
+      </aside>
 
-        <main className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+      <main className="min-w-0 flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+        <div className="mx-auto w-full max-w-4xl">
           {state === "loading" && <p className="text-muted-foreground text-sm">Loading...</p>}
 
           {state === "error" && (
@@ -194,8 +194,8 @@ export default function AdminPage() {
               </div>
             </>
           )}
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
