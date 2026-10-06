@@ -15,7 +15,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import type { Model } from "@/lib/models";
-import { getModelGroup } from "@/lib/models";
+import { getExternalProviderLabel, getModelGroup } from "@/lib/models";
 
 const getGroupedModels = (models: Model[]) => {
   const groups = new Map<string, Model[]>();
@@ -100,7 +100,7 @@ const ModelSelect = ({
                     ))}
                     {model.source === "external" && (
                       <Badge variant="secondary" className="ml-auto">
-                        Google API
+                        {getExternalProviderLabel(model)}
                       </Badge>
                     )}
                   </CommandItem>

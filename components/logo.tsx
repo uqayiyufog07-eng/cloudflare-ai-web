@@ -100,3 +100,105 @@ export const OpenAILogo = () => (
     </defs>
   </svg>
 );
+
+// Brand marks below are official vendor logos sourced from Simple Icons
+// (https://simpleicons.io) and the LobeHub icons-static-svg package.
+
+export const AnthropicLogo = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="1em"
+    height="1em"
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    fillRule="evenodd"
+    style={{ flex: "none", lineHeight: 1 }}
+  >
+    <title>Anthropic</title>
+    <path d="M13.827 3.52h3.603L24 20h-3.603l-6.57-16.48zm-7.258 0h3.767L16.906 20h-3.674l-1.343-3.461H5.017l-1.344 3.46H0L6.57 3.522zm4.132 9.959L8.453 7.687 6.205 13.48H10.7z" />
+  </svg>
+);
+
+export const XAILogo = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="1em"
+    height="1em"
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    fillRule="evenodd"
+    style={{ flex: "none", lineHeight: 1 }}
+  >
+    <title>xAI</title>
+    <path d="M6.469 8.776L16.512 23h-4.464L2.005 8.776H6.47zm-.004 7.9l2.233 3.164L6.467 23H2l4.465-6.324zM22 2.582V23h-3.659V7.764L22 2.582zM22 1l-9.952 14.095-2.233-3.163L17.533 1H22z" />
+  </svg>
+);
+
+export const MistralLogo = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="1em"
+    height="1em"
+    viewBox="0 0 24 24"
+    style={{ flex: "none", lineHeight: 1 }}
+  >
+    <title>Mistral AI</title>
+    <path d="M3.428 3.4h3.429v3.428H3.428V3.4zm13.714 0h3.43v3.428h-3.43V3.4z" fill="gold" />
+    <path
+      d="M3.428 6.828h6.857v3.429H3.429V6.828zm10.286 0h6.857v3.429h-6.857V6.828z"
+      fill="#FFAF00"
+    />
+    <path d="M3.428 10.258h17.144v3.428H3.428v-3.428z" fill="#FF8205" />
+    <path
+      d="M3.428 13.686h3.429v3.428H3.428v-3.428zm6.858 0h3.429v3.428h-3.429v-3.428zm6.856 0h3.43v3.428h-3.43v-3.428z"
+      fill="#FA500F"
+    />
+    <path
+      d="M0 17.114h10.286v3.429H0v-3.429zm13.714 0H24v3.429H13.714v-3.429z"
+      fill="#E10500"
+    />
+  </svg>
+);
+
+export const ByteDanceLogo = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="1em"
+    height="1em"
+    viewBox="0 0 24 24"
+    style={{ flex: "none", lineHeight: 1 }}
+  >
+    <title>ByteDance</title>
+    <path
+      d="M14.944 18.587l-1.704-.445V10.01l1.824-.462c1-.254 1.84-.461 1.88-.453.032 0 .056 2.235.056 4.972v4.973l-.176-.008c-.104 0-.952-.207-1.88-.446z"
+      fill="#00C8D2"
+    />
+    <path
+      d="M7 16.542c0-2.736.024-4.98.064-4.98.032-.008.872.2 1.88.454l1.816.461-.016 4.05-.024 4.049-1.632.422c-.896.23-1.736.445-1.856.469L7 21.523v-4.98z"
+      fill="#3C8CFF"
+    />
+    <path
+      d="M19.24 12.477c0-9.03.008-9.515.144-9.475.072.024.784.207 1.576.406.792.207 1.576.405 1.744.445l.296.08-.016 8.56-.024 8.568-1.624.414c-.888.23-1.728.437-1.856.47l-.24.055v-9.523z"
+      fill="#78E6DC"
+    />
+    <path
+      d="M1 12.509c0-4.678.024-8.505.064-8.505.032 0 .872.207 1.872.454l1.824.461v7.582c0 4.16-.016 7.574-.032 7.574-.024 0-.872.215-1.88.47L1 21.013v-8.505z"
+      fill="#325AB4"
+    />
+  </svg>
+);
+
+export const BlackForestLabsLogo = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="1em"
+    height="1em"
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    fillRule="evenodd"
+    style={{ flex: "none", lineHeight: 1 }}
+  >
+    <title>Black Forest Labs</title>
+    <path d="M17.113 10.248H14.56l-2.553-3.616-7.963 11.27h2.558l5.405-7.654h2.552l-5.404 7.653h2.565l5.392-7.653L24 20 19.97 20v-2.091l-2.857-4.044-2.842 4.037V20H0L12.008 3l5.105 7.249z" />
+  </svg>
+);

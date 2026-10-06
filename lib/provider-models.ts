@@ -9,6 +9,7 @@
  */
 
 import type { Model } from "@/lib/models";
+import { getDisplayBrand } from "@/lib/models";
 import type { ProviderId, ProviderSettings } from "@/lib/provider-settings";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -79,25 +80,31 @@ export const fetchUpstreamModelIds = async (
   return [...new Set(ids)].sort();
 };
 
-const toModel = (provider: ProviderId, id: string): Model =>
-  provider === "openai"
-    ? {
-        id,
-        name: id,
-        brand: "OpenAI",
-        type: "Text Generation",
-        provider: "openai",
-        source: "external",
-      }
-    : {
-        id,
-        name: id,
-        brand: "Google",
-        type: "Text Generation",
-        provider: "google",
-        source: "external",
-        input: ["image", "search"],
-      };
+const toModel = (provider: ProviderId, id: string): Model => {
+  const model: Model =
+    provider === "openai"
+      ? {
+          id,
+          name: id,
+          brand: "OpenAI",
+          type: "Text Generation",
+          provider: "openai",
+          source: "external",
+        }
+      : {
+          id,
+          name: id,
+          brand: "Google",
+          type: "Text Generation",
+          provider: "google",
+          source: "external",
+          input: ["image", "search"],
+        };
+
+  // Models on an OpenAI-compatible endpoint can belong to any vendor
+  // (Claude, DeepSeek, Qwen, ...); infer the real brand from the model id.
+  return { ...model, brand: getDisplayBrand(model) };
+};
 
 interface CacheEntry {
   sourceKey: string;

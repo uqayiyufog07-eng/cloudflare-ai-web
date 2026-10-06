@@ -76,12 +76,17 @@ describe("fetchUpstreamModelIds", () => {
 
 describe("getUpstreamModels", () => {
   test("maps stored model ids without touching the network", async () => {
-    const settings: ProviderSettings = { apiKey: "sk-x", models: ["gpt-5.2", "claude-x"] };
+    const settings: ProviderSettings = {
+      apiKey: "sk-x",
+      models: ["gpt-5.2", "claude-x", "deepseek-chat", "grok-3"],
+    };
 
     const models = await getUpstreamModels("openai", settings);
     expect(models).toEqual([
       { id: "gpt-5.2", name: "gpt-5.2", brand: "OpenAI", type: "Text Generation", provider: "openai", source: "external" },
-      { id: "claude-x", name: "claude-x", brand: "OpenAI", type: "Text Generation", provider: "openai", source: "external" },
+      { id: "claude-x", name: "claude-x", brand: "Anthropic", type: "Text Generation", provider: "openai", source: "external" },
+      { id: "deepseek-chat", name: "deepseek-chat", brand: "DeepSeek", type: "Text Generation", provider: "openai", source: "external" },
+      { id: "grok-3", name: "grok-3", brand: "xAI", type: "Text Generation", provider: "openai", source: "external" },
     ]);
     expect(fetchCalls).toBe(0);
   });
