@@ -47,7 +47,13 @@ docker run -d --name cloudflare-ai-web \
 | `GET /v1/models/{id}`    | 查询单个模型                           |
 | `POST /v1/chat/completions` | 聊天补全，支持 `stream` 流式输出与图像输入 |
 
-认证方式为 `Authorization: Bearer <API Key>`，API Key 取 `OPENAI_API_KEY`；未设置时回退到 `APP_PASSWORD`；两者都未设置时公开访问。图像附件仅支持 base64 data URL（与网页端一致）。
+认证方式为 `Authorization: Bearer <API Key>`。API Key 的匹配优先级：
+
+1. `/admin` 页面中创建的动态 API Key（存储在 Workers KV 的 `API_KEYS` 命名空间中，推荐）
+2. 环境变量 `OPENAI_API_KEY`；未设置时回退到 `APP_PASSWORD`
+3. 两者都未设置时公开访问（若已配置 KV 存储，仍要求有效的 Bearer Key）
+
+图像附件仅支持 base64 data URL（与网页端一致）。
 
 ```bash
 curl https://your-domain.com/v1/chat/completions \
@@ -61,6 +67,22 @@ curl https://your-domain.com/v1/chat/completions \
 ```
 
 > 工具调用（`tools`）暂不支持；`tools` 等不支持的参数会被忽略。
+
+## API Key 管理（/admin）
+
+访问 `/admin` 页面可以动态管理 OpenAI 格式 API 的密钥（创建 / 列出 / 删除，格式为 `sk-cfw-...`），无需重新部署即可生效：
+
+- 登录密码取 `ADMIN_PASSWORD`；未设置时回退到 `APP_PASSWORD`；两者都未设置时该页面显示"未配置"状态
+- 新创建的密钥可能需要数秒（KV 最终一致性）才在所有边缘节点生效
+- 删除密钥立即失效（同样有数秒的传播延迟）
+- 列表会显示每个密钥的名称、创建时间和最后使用时间（每分钟最多更新一次）
+
+部署到 Cloudflare Workers 时需在 `wrangler.jsonc` 中配置 `API_KEYS` KV 命名空间（仓库中已包含）：
+
+```bash
+wrangler kv namespace create API_KEYS
+# 将输出的 id 填入 wrangler.jsonc 的 kv_namespaces
+```
 
 ## 部署说明
 
@@ -76,6 +98,7 @@ curl https://your-domain.com/v1/chat/completions \
 | NEXT_PUBLIC_CF_AI_GATEWAY_PROVIDERS | Cloudflare AI网关提供者    |              |
 | APP_PASSWORD                        | 访问密码（Access Session） |              |
 | OPENAI_API_KEY                      | OpenAI 格式 API 的密钥     |              |
+| ADMIN_PASSWORD                      | /admin 管理页面的登录密码  |              |
 
 #### CF_WORKERS_AI_TOKEN
 

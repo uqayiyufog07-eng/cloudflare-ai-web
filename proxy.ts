@@ -1,24 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { isBearerAuthorized, isRequestAuthorized } from "@/lib/auth";
-
-const unauthorized = () =>
-  new Response(
-    JSON.stringify({
-      error: {
-        message: "Missing or invalid API key. Set the Authorization header to 'Bearer <key>'.",
-        type: "authentication_error",
-        code: "invalid_api_key",
-      },
-    }),
-    { status: 401, headers: { "content-type": "application/json" } },
-  );
+import { isRequestAuthorized } from "@/lib/auth";
 
 export async function proxy(request: NextRequest) {
-  // OpenAI-compatible endpoints authenticate with a bearer key instead of a cookie.
-  if (request.nextUrl.pathname.startsWith("/v1/")) {
-    if (!(await isBearerAuthorized(request))) {
-      return unauthorized();
-    }
+  // Admin API routes verify their own credentials (admin password + admin
+  // cookie, see lib/auth.ts) and must not be gated by the user session below,
+  // otherwise an admin without a chat session could not use the console.
+  if (request.nextUrl.pathname.startsWith("/api/admin/")) {
     return NextResponse.next();
   }
 
@@ -41,5 +28,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api/:path*", "/v1/:path*"],
+  matcher: ["/api/:path*"],
 };

@@ -47,7 +47,13 @@ The application exposes the following OpenAI-compatible endpoints. Model names m
 | `GET /v1/models/{id}`    | Retrieve a single model                                  |
 | `POST /v1/chat/completions` | Chat completions with `stream` support and image input |
 
-Authentication uses `Authorization: Bearer <API Key>`. The API key is taken from `OPENAI_API_KEY`, falling back to `APP_PASSWORD`; when neither is set the endpoints are public. Image attachments only support base64 data URLs (same as the web UI).
+Authentication uses `Authorization: Bearer <API Key>`. API keys are matched in the following priority order:
+
+1. Dynamic API keys created on the `/admin` page (stored in the `API_KEYS` Workers KV namespace, recommended)
+2. The `OPENAI_API_KEY` environment variable, falling back to `APP_PASSWORD` when unset
+3. Public access when neither is set (a valid Bearer key is still required once the KV store is configured)
+
+Image attachments only support base64 data URLs (same as the web UI).
 
 ```bash
 curl https://your-domain.com/v1/chat/completions \
@@ -61,6 +67,22 @@ curl https://your-domain.com/v1/chat/completions \
 ```
 
 > Function calling (`tools`) is not supported; unsupported parameters such as `tools` are ignored.
+
+## API Key Management (/admin)
+
+Visit the `/admin` page to dynamically manage keys for the OpenAI-format APIs (create / list / delete, format `sk-cfw-...`). Changes take effect without redeploying:
+
+- The login password is taken from `ADMIN_PASSWORD`, falling back to `APP_PASSWORD`; when neither is set the page shows an "unconfigured" state
+- Newly created keys may take a few seconds to propagate across edge nodes (KV eventual consistency)
+- Deleted keys stop working immediately (with a few seconds of propagation delay)
+- The list shows each key's name, creation time, and last-used time (updated at most once per minute)
+
+When deploying to Cloudflare Workers, the `API_KEYS` KV namespace must be configured in `wrangler.jsonc` (already included in this repo):
+
+```bash
+wrangler kv namespace create API_KEYS
+# Fill the returned id into kv_namespaces in wrangler.jsonc
+```
 
 ## Deployment Instructions
 
@@ -76,6 +98,7 @@ curl https://your-domain.com/v1/chat/completions \
 | NEXT_PUBLIC_CF_AI_GATEWAY_PROVIDERS | Cloudflare AI Gateway Providers  |              |
 | APP_PASSWORD                        | Access Password (Access Session) |              |
 | OPENAI_API_KEY                      | API key for the OpenAI-format APIs |            |
+| ADMIN_PASSWORD                      | Login password for the /admin console |        |
 
 #### CF_WORKERS_AI_TOKEN
 

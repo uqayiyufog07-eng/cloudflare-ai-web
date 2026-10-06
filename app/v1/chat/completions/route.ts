@@ -12,6 +12,7 @@ import {
   toOpenAiUsage,
   toSseFrame,
 } from "@/lib/openai-compat";
+import { authorizeOpenAiRequest } from "@/lib/auth";
 import { createChatModel, ProviderConfigurationError } from "@/lib/providers";
 
 export const dynamic = "force-dynamic";
@@ -101,6 +102,11 @@ const createStreamingResponse = (
 };
 
 export async function POST(request: Request) {
+  const auth = await authorizeOpenAiRequest(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const parsed = await parseChatCompletionRequest(request);
   if (!parsed.ok) {
     return parsed.response;

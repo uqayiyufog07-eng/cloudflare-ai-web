@@ -1,9 +1,15 @@
+import { authorizeOpenAiRequest } from "@/lib/auth";
 import { toOwnedBy } from "@/lib/openai-compat";
 import { getModelCatalog } from "@/lib/model-catalog";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await authorizeOpenAiRequest(request);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const catalog = await getModelCatalog();
   const models = catalog.filter((model) => model.type === "Text Generation");
   const created = Math.floor(Date.now() / 1000);

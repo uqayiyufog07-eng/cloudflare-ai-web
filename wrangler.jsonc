@@ -16,6 +16,13 @@
 		// are set with `wrangler secret put` or in the Cloudflare dashboard.
 		"CF_ACCOUNT_ID": "5dbfeeed2915872f0855a916283d82c4"
 	},
+	"kv_namespaces": [
+		{
+			// Stores the dynamic API keys managed on the /admin page.
+			"binding": "API_KEYS",
+			"id": "5b7b8e6e9b7b460a94a65e8a1271d9c0"
+		}
+	],
 	"images": {
 		// Enable image optimization
 		// see https://opennext.js.org/cloudflare/howtos/image

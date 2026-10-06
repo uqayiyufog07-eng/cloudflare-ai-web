@@ -36,7 +36,7 @@ test("completions reports unknown models as model_not_found", async () => {
 });
 
 test("models returns an OpenAI-style list", async () => {
-  const response = await getModels();
+  const response = await getModels(new Request("https://example.com/v1/models"));
   expect(response.status).toBe(200);
   const body = await response.json();
   expect(body.object).toBe("list");
