@@ -10,6 +10,11 @@
 !.yarn/releases
 !.yarn/versions
 
+# opennextjs cloudflare
+/.open-next
+/.dev.vars
+/.wrangler
+
 # testing
 /coverage
 
