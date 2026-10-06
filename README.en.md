@@ -33,8 +33,34 @@ docker run -d --name cloudflare-ai-web \
 - Chat history is stored locally
 - Image attachments are resized in the browser (long edge up to 1568px, at most 512 KiB each, up to 5 per request) so requests fit the Vercel Functions body limit
 - Access Session protection via deployment password
+- Standard OpenAI-format APIs (`/v1/models`, `/v1/chat/completions`) that any OpenAI client can consume
 
 > **Note:** In public mode anyone can use your inference APIs. Set `APP_PASSWORD` to enable Access Session.
+
+## OpenAI-Format APIs
+
+The application exposes the following OpenAI-compatible endpoints. Model names match the `id` values returned by `GET /v1/models`:
+
+| Endpoint                 | Description                                              |
+| ------------------------ | -------------------------------------------------------- |
+| `GET /v1/models`         | List available text generation models                    |
+| `GET /v1/models/{id}`    | Retrieve a single model                                  |
+| `POST /v1/chat/completions` | Chat completions with `stream` support and image input |
+
+Authentication uses `Authorization: Bearer <API Key>`. The API key is taken from `OPENAI_API_KEY`, falling back to `APP_PASSWORD`; when neither is set the endpoints are public. Image attachments only support base64 data URLs (same as the web UI).
+
+```bash
+curl https://your-domain.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "@cf/meta/llama-3.1-8b-instruct",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": true
+  }'
+```
+
+> Function calling (`tools`) is not supported; unsupported parameters such as `tools` are ignored.
 
 ## Deployment Instructions
 
@@ -49,6 +75,7 @@ docker run -d --name cloudflare-ai-web \
 | GOOGLE_API_KEY                      | Google AI Studio Token           | With Google  |
 | NEXT_PUBLIC_CF_AI_GATEWAY_PROVIDERS | Cloudflare AI Gateway Providers  |              |
 | APP_PASSWORD                        | Access Password (Access Session) |              |
+| OPENAI_API_KEY                      | API key for the OpenAI-format APIs |            |
 
 #### CF_WORKERS_AI_TOKEN
 

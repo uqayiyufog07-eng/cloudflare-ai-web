@@ -33,8 +33,34 @@ docker run -d --name cloudflare-ai-web \
 - 聊天记录本地存储
 - 图片附件在浏览器内自动压缩（长边不超过 1568px，单张不超过 512 KiB，每次请求最多 5 张），请求体积满足 Vercel Functions 限制
 - 支持 Access Session（访问密码）保护
+- 提供标准 OpenAI 格式的 API（`/v1/models`、`/v1/chat/completions`），可直接接入 OpenAI 客户端
 
 > **注意：** 公开模式下任何人都可以使用你的推理 API。建议设置 `APP_PASSWORD` 以启用 Access Session。
+
+## OpenAI 格式 API
+
+本应用暴露以下 OpenAI 兼容端点，模型名与 `GET /v1/models` 返回的 `id` 一致：
+
+| 端点                     | 说明                                   |
+| ------------------------ | -------------------------------------- |
+| `GET /v1/models`         | 列出可用的文本生成模型                 |
+| `GET /v1/models/{id}`    | 查询单个模型                           |
+| `POST /v1/chat/completions` | 聊天补全，支持 `stream` 流式输出与图像输入 |
+
+认证方式为 `Authorization: Bearer <API Key>`，API Key 取 `OPENAI_API_KEY`；未设置时回退到 `APP_PASSWORD`；两者都未设置时公开访问。图像附件仅支持 base64 data URL（与网页端一致）。
+
+```bash
+curl https://your-domain.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "@cf/meta/llama-3.1-8b-instruct",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": true
+  }'
+```
+
+> 工具调用（`tools`）暂不支持；`tools` 等不支持的参数会被忽略。
 
 ## 部署说明
 
@@ -49,6 +75,7 @@ docker run -d --name cloudflare-ai-web \
 | GOOGLE_API_KEY                      | Google AI Studio 令牌      | 使用Google时 |
 | NEXT_PUBLIC_CF_AI_GATEWAY_PROVIDERS | Cloudflare AI网关提供者    |              |
 | APP_PASSWORD                        | 访问密码（Access Session） |              |
+| OPENAI_API_KEY                      | OpenAI 格式 API 的密钥     |              |
 
 #### CF_WORKERS_AI_TOKEN
 

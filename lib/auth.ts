@@ -141,3 +141,29 @@ export const isRequestAuthorized = async (request: Request): Promise<boolean> =>
   const token = cookie.slice(COOKIE_NAME.length + 1);
   return verifySessionToken(token, password);
 };
+
+/**
+ * The API key accepted by the OpenAI-compatible endpoints in the Authorization header.
+ * OPENAI_API_KEY takes precedence; otherwise the deployment access password doubles
+ * as the API key. Returns undefined when neither is configured.
+ */
+export const getOpenAiApiKey = (): string | undefined =>
+  process.env.OPENAI_API_KEY || process.env.APP_PASSWORD;
+
+/**
+ * Verifies the Authorization: Bearer header of an OpenAI-compatible request.
+ * Returns true when no API key is configured (public deployment).
+ */
+export const isBearerAuthorized = async (request: Request): Promise<boolean> => {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    return true;
+  }
+
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Bearer ")) {
+    return false;
+  }
+
+  return constantTimeCompare(header.slice("Bearer ".length), apiKey);
+};
