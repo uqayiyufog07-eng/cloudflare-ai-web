@@ -68,16 +68,30 @@ curl https://your-domain.com/v1/chat/completions \
 
 > 工具调用（`tools`）暂不支持；`tools` 等不支持的参数会被忽略。
 
-## API Key 管理（/admin）
+## 管理控制台（/admin）
 
-访问 `/admin` 页面可以动态管理 OpenAI 格式 API 的密钥（创建 / 列出 / 删除，格式为 `sk-cfw-...`），无需重新部署即可生效：
+`/admin` 页面左侧导航分为两个分区，登录密码取 `ADMIN_PASSWORD`；未设置时回退到 `APP_PASSWORD`；两者都未设置时该页面显示"未配置"状态。
 
-- 登录密码取 `ADMIN_PASSWORD`；未设置时回退到 `APP_PASSWORD`；两者都未设置时该页面显示"未配置"状态
+### API Keys
+
+动态管理 OpenAI 格式 API 的密钥（创建 / 列出 / 删除，格式为 `sk-cfw-...`），无需重新部署即可生效：
+
 - 新创建的密钥可能需要数秒（KV 最终一致性）才在所有边缘节点生效
 - 删除密钥立即失效（同样有数秒的传播延迟）
 - 列表会显示每个密钥的名称、创建时间和最后使用时间（每分钟最多更新一次）
 
-部署到 Cloudflare Workers 时需在 `wrangler.jsonc` 中配置 `API_KEYS` KV 命名空间（仓库中已包含）：
+### Providers（上游模型服务）
+
+无需重新部署即可配置上游聊天模型服务，保存后模型立即出现在网页模型目录和 `/v1/models` 中：
+
+- **OpenAI**：支持任意 OpenAI 兼容端点，可修改 API 地址（如 `https://aihubmix.com/v1`），默认为 `https://api.openai.com/v1`
+- **Google**：直连 Gemini API；此处配置优先于 `GOOGLE_API_KEY` + AI Gateway 环境变量
+- 点击 **Fetch models** 自动从上游拉取模型列表，勾选需要启用的模型；不勾选任何模型时自动启用上游返回的全部聊天模型
+- 也可以手动添加模型 ID；更改后点击 **Save** 保存，数秒内（KV 最终一致性）生效
+
+> 注意：此处填写的 API Key 是部署站点调用上游服务所用的密钥，与登录本站的密钥（`OPENAI_API_KEY`、`APP_PASSWORD`、/admin 创建的 Key）无关。
+
+部署到 Cloudflare Workers 时需在 `wrangler.jsonc` 中配置 `API_KEYS` KV 命名空间（仓库中已包含，同时用于存储 API Key 与 Provider 设置）：
 
 ```bash
 wrangler kv namespace create API_KEYS

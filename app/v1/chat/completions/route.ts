@@ -128,9 +128,9 @@ export async function POST(request: Request) {
     );
   }
 
-  let chatModel: ReturnType<typeof createChatModel>;
+  let chatModel: Awaited<ReturnType<typeof createChatModel>>;
   try {
-    chatModel = createChatModel(catalogModel, {});
+    chatModel = await createChatModel(catalogModel, {});
   } catch (error) {
     if (error instanceof ProviderConfigurationError) {
       console.error(error.message);

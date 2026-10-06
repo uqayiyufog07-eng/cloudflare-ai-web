@@ -1,5 +1,5 @@
 export type ModelType = "Text Generation" | "Text to Image";
-export type ModelProvider = "workers-ai" | "google";
+export type ModelProvider = "workers-ai" | "google" | "openai";
 export type ModelSource = "cloudflare" | "external";
 export type ModelInput = "image" | "search";
 

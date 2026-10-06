@@ -1,14 +1,17 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { extractReasoningMiddleware, wrapLanguageModel } from "ai";
 import { createAiGateway } from "ai-gateway-provider";
 import { createWorkersAI } from "workers-ai-provider";
 import { createWorkersAIFetch } from "@/lib/workers-ai-fetch";
 import type { Model } from "@/lib/models";
+import { DEFAULT_BASE_URLS } from "@/lib/provider-models";
+import { getProviderSettings, type ProviderSettings } from "@/lib/provider-settings";
 
 export class ProviderConfigurationError extends Error {
-  constructor(name: string) {
-    super(`Missing required environment variable: ${name}`);
+  constructor(message: string) {
+    super(message);
     this.name = "ProviderConfigurationError";
   }
 }
@@ -16,7 +19,7 @@ export class ProviderConfigurationError extends Error {
 const requireEnvironmentVariable = (name: string): string => {
   const value = process.env[name];
   if (!value) {
-    throw new ProviderConfigurationError(name);
+    throw new ProviderConfigurationError(`Missing required environment variable: ${name}`);
   }
   return value;
 };
@@ -74,6 +77,12 @@ const getGoogleGatewayProviders = () => {
   return { gateway, google };
 };
 
+const getGoogleDirectProvider = (settings: ProviderSettings) =>
+  createGoogleGenerativeAI({
+    apiKey: settings.apiKey,
+    ...(settings.baseUrl ? { baseURL: settings.baseUrl } : {}),
+  });
+
 type GoogleSearchTool = ReturnType<
   ReturnType<typeof createGoogleGenerativeAI>["tools"]["googleSearch"]
 >;
@@ -85,11 +94,41 @@ export interface ChatModel {
 
 /**
  * Resolves a catalog model to the language model that serves it.
- * Throws ProviderConfigurationError when the provider's environment is incomplete.
+ * OpenAI-compatible models always come from the admin-configured settings on
+ * the /admin Providers page. Google models prefer those settings too and fall
+ * back to the AI Gateway environment variables. Throws
+ * ProviderConfigurationError when the selected provider is not configured.
  */
-export const createChatModel = (catalogModel: Model, options: { search?: boolean }): ChatModel => {
+export const createChatModel = async (
+  catalogModel: Model,
+  options: { search?: boolean },
+): Promise<ChatModel> => {
   switch (catalogModel.provider) {
+    case "openai": {
+      const settings = await getProviderSettings("openai");
+      if (!settings) {
+        throw new ProviderConfigurationError(
+          "The OpenAI-compatible provider is not configured. Set it up on the /admin Providers page.",
+        );
+      }
+
+      const openai = createOpenAICompatible({
+        name: "openai",
+        baseURL: settings.baseUrl ?? DEFAULT_BASE_URLS.openai,
+        apiKey: settings.apiKey,
+      });
+      return { model: openai.chatModel(catalogModel.id) };
+    }
     case "google": {
+      const settings = await getProviderSettings("google");
+      if (settings) {
+        const google = getGoogleDirectProvider(settings);
+        return {
+          model: google.chat(catalogModel.id),
+          tools: options.search ? { google_search: google.tools.googleSearch({}) } : undefined,
+        };
+      }
+
       const { gateway, google } = getGoogleGatewayProviders();
       return {
         model: gateway([google.chat(catalogModel.id)]),

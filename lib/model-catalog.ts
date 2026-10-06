@@ -8,6 +8,13 @@ import {
   type ModelInput,
   type ModelType,
 } from "@/lib/models";
+import { getUpstreamModels } from "@/lib/provider-models";
+import {
+  getEnabledProviders,
+  getProviderSettings,
+  type ProviderId,
+  type ProviderSettings,
+} from "@/lib/provider-settings";
 
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 const CATALOG_TIMEOUT_MS = 5_000;
@@ -235,17 +242,52 @@ const getTaskModels = async (task: CloudflareTask): Promise<Model[]> => {
 };
 
 export const getModelCatalog = async (): Promise<Model[]> => {
-  const [chatModels, imageModels] = await Promise.all([
+  const [chatModels, imageModels, enabledProviders] = await Promise.all([
     getTaskModels("Text Generation"),
     getTaskModels("Text-to-Image"),
+    getEnabledProviders(),
   ]);
 
-  return [...chatModels, ...imageModels, ...getExternalModels()];
+  if (!enabledProviders) {
+    return [...chatModels, ...imageModels, ...getExternalModels()];
+  }
+
+  const upstreamLists = await Promise.all(
+    (Object.entries(enabledProviders) as Array<[ProviderId, ProviderSettings]>).map(
+      ([provider, settings]) => getUpstreamModels(provider, settings),
+    ),
+  );
+
+  // Upstream entries win over the legacy environment-driven external list.
+  const external: Model[] = [];
+  const seen = new Set<string>();
+  for (const model of [...upstreamLists.flat(), ...getExternalModels()]) {
+    const key = `${model.provider}:${model.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      external.push(model);
+    }
+  }
+
+  return [...chatModels, ...imageModels, ...external];
 };
 
 export const getCatalogModel = async (id: string, type: ModelType, provider: Model["provider"]) => {
-  if (provider === "google") {
-    return getExternalModels().find((model) => model.id === id && model.type === type);
+  if (provider !== "workers-ai") {
+    // Admin-configured settings win; Google falls back to the legacy list.
+    const settings = await getProviderSettings(provider);
+    if (settings) {
+      const model = (await getUpstreamModels(provider, settings)).find(
+        (model) => model.id === id && model.type === type,
+      );
+      if (model) {
+        return model;
+      }
+    }
+    if (provider === "google") {
+      return getExternalModels().find((model) => model.id === id && model.type === type);
+    }
+    return undefined;
   }
 
   const task: CloudflareTask = type === "Text Generation" ? "Text Generation" : "Text-to-Image";

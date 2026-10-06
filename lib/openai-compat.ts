@@ -114,10 +114,12 @@ export const toOwnedBy = (brand: string) => brand.toLowerCase().replaceAll(" ", 
 
 /**
  * Resolves a request's model id to a catalog chat model, searching Cloudflare
- * models first and external models (e.g. Gemini via the AI Gateway) second.
+ * models first, admin-configured upstream providers second, and external
+ * models (e.g. Gemini via the AI Gateway) last.
  */
 export const resolveCatalogChatModel = async (id: string) =>
   (await getCatalogModel(id, "Text Generation", "workers-ai")) ??
+  (await getCatalogModel(id, "Text Generation", "openai")) ??
   (await getCatalogModel(id, "Text Generation", "google"));
 
 // ---- Message conversion ----

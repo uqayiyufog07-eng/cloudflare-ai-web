@@ -68,16 +68,30 @@ curl https://your-domain.com/v1/chat/completions \
 
 > Function calling (`tools`) is not supported; unsupported parameters such as `tools` are ignored.
 
-## API Key Management (/admin)
+## Admin Console (/admin)
 
-Visit the `/admin` page to dynamically manage keys for the OpenAI-format APIs (create / list / delete, format `sk-cfw-...`). Changes take effect without redeploying:
+The `/admin` page has two sections in its left navigation. The login password is taken from `ADMIN_PASSWORD`, falling back to `APP_PASSWORD`; when neither is set the page shows an "unconfigured" state.
 
-- The login password is taken from `ADMIN_PASSWORD`, falling back to `APP_PASSWORD`; when neither is set the page shows an "unconfigured" state
+### API Keys
+
+Dynamically manage keys for the OpenAI-format APIs (create / list / delete, format `sk-cfw-...`). Changes take effect without redeploying:
+
 - Newly created keys may take a few seconds to propagate across edge nodes (KV eventual consistency)
 - Deleted keys stop working immediately (with a few seconds of propagation delay)
 - The list shows each key's name, creation time, and last-used time (updated at most once per minute)
 
-When deploying to Cloudflare Workers, the `API_KEYS` KV namespace must be configured in `wrangler.jsonc` (already included in this repo):
+### Providers
+
+Configure upstream chat providers without redeploying. Saved models appear in the web model catalog and `/v1/models` right away:
+
+- **OpenAI**: any OpenAI-compatible endpoint; change the API address to use a relay such as `https://aihubmix.com/v1` (default `https://api.openai.com/v1`)
+- **Google**: direct Gemini API access; settings stored here take precedence over the `GOOGLE_API_KEY` + AI Gateway environment variables
+- Click **Fetch models** to pull the model list from the upstream endpoint, then pick the models to enable; leaving nothing selected enables every chat model the endpoint returns
+- Model ids can also be added manually; click **Save** to store changes, which propagate within a few seconds (KV eventual consistency)
+
+> Note: the API keys entered here are the credentials this deployment uses to call the upstream services. They are unrelated to the keys that log into this site (`OPENAI_API_KEY`, `APP_PASSWORD`, and the keys created under API Keys).
+
+When deploying to Cloudflare Workers, the `API_KEYS` KV namespace must be configured in `wrangler.jsonc` (already included in this repo; it stores both API keys and provider settings):
 
 ```bash
 wrangler kv namespace create API_KEYS

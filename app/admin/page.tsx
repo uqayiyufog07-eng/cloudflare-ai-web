@@ -4,67 +4,30 @@ import { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import * as v from "valibot";
 import { valibotResolver } from "@hookform/resolvers/valibot";
-import { Copy, KeyRound, Plus, Trash2 } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
+import { KeyRound, Plug } from "lucide-react";
+import ApiKeysSection, { type ApiKeyEntry } from "@/components/admin/api-keys-section";
+import ProviderSettingsSection from "@/components/admin/provider-settings-section";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Field, FieldError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { toast } from "@/components/ui/toast";
-
-interface ApiKeyEntry {
-  token: string;
-  name: string;
-  createdAt: string;
-  lastUsedAt: string | null;
-}
 
 type AdminState = "loading" | "unconfigured" | "unauthenticated" | "error" | "ready";
+type AdminSection = "keys" | "providers";
+
+const SECTIONS: Array<{ id: AdminSection; label: string; icon: typeof KeyRound }> = [
+  { id: "keys", label: "API Keys", icon: KeyRound },
+  { id: "providers", label: "Providers", icon: Plug },
+];
 
 const loginSchema = v.object({ password: v.pipe(v.string(), v.minLength(1)) });
 type LoginData = v.InferOutput<typeof loginSchema>;
 
-const createSchema = v.object({ name: v.pipe(v.string(), v.minLength(1), v.maxLength(64)) });
-type CreateData = v.InferOutput<typeof createSchema>;
-
-const formatDate = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-
-const copyToken = async (token: string) => {
-  try {
-    await navigator.clipboard.writeText(token);
-    toast.add({ title: "API key copied to clipboard.", type: "success" });
-  } catch {
-    toast.add({ title: "Unable to copy. Please select the key manually.", type: "error" });
-  }
-};
-
 export default function AdminPage() {
   const [state, setState] = useState<AdminState>("loading");
   const [keys, setKeys] = useState<ApiKeyEntry[]>([]);
+  const [section, setSection] = useState<AdminSection>("keys");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [created, setCreated] = useState<ApiKeyEntry | null>(null);
-  const [creating, setCreating] = useState(false);
 
   const loadKeys = useCallback(async () => {
     setState("loading");
@@ -122,50 +85,6 @@ export default function AdminPage() {
     }
   };
 
-  const createForm = useForm<CreateData>({
-    resolver: valibotResolver(createSchema),
-    defaultValues: { name: "" },
-  });
-
-  const onCreate = async (values: CreateData) => {
-    setCreating(true);
-    try {
-      const response = await fetch("/api/admin/keys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: values.name }),
-      });
-      if (!response.ok) {
-        toast.add({ title: "Failed to create the API key.", type: "error" });
-        return;
-      }
-      const entry = (await response.json()) as ApiKeyEntry;
-      setCreated(entry);
-      setKeys((previous) => [entry, ...previous]);
-      createForm.reset({ name: "" });
-    } catch {
-      toast.add({ title: "Failed to create the API key.", type: "error" });
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const onDelete = async (token: string) => {
-    try {
-      const response = await fetch(`/api/admin/keys/${encodeURIComponent(token)}`, {
-        method: "DELETE",
-      });
-      if (!response.ok) {
-        toast.add({ title: "Failed to delete the API key.", type: "error" });
-        return;
-      }
-      setKeys((previous) => previous.filter((key) => key.token !== token));
-      toast.add({ title: "API key deleted.", type: "success" });
-    } catch {
-      toast.add({ title: "Failed to delete the API key.", type: "error" });
-    }
-  };
-
   if (state === "unconfigured") {
     return (
       <div className="flex h-full items-center justify-center px-4">
@@ -173,8 +92,8 @@ export default function AdminPage() {
           <KeyRound className="text-muted-foreground mx-auto" aria-hidden />
           <h1 className="text-lg font-semibold">Admin is not configured</h1>
           <p className="text-muted-foreground text-sm">
-            Set the ADMIN_PASSWORD (or APP_PASSWORD) environment variable to enable
-            API key management for this deployment.
+            Set the ADMIN_PASSWORD (or APP_PASSWORD) environment variable to enable the
+            admin console for this deployment.
           </p>
         </div>
       </div>
@@ -188,7 +107,7 @@ export default function AdminPage() {
           <div className="space-y-1 text-center">
             <h1 className="text-lg font-semibold">Admin console</h1>
             <p className="text-muted-foreground text-sm">
-              Enter the admin password to manage API keys.
+              Enter the admin password to manage API keys and providers.
             </p>
           </div>
           <form onSubmit={loginForm.handleSubmit(onLogin)} className="space-y-3">
@@ -220,171 +139,63 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="mx-auto h-full w-full max-w-4xl space-y-4 overflow-y-auto px-4 py-8">
-      <div className="flex items-center justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-lg font-semibold">API keys</h1>
-          <p className="text-muted-foreground text-sm">
-            Bearer keys for the OpenAI-compatible endpoints (
-            <code className="font-mono text-xs">/v1/chat/completions</code>,{" "}
-            <code className="font-mono text-xs">/v1/models</code>). Newly created keys
-            may take a few seconds to become active.
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setCreated(null);
-            setCreateOpen(true);
-          }}
-        >
-          <Plus aria-hidden />
-          Create key
-        </Button>
-      </div>
-
-      {state === "loading" && <p className="text-muted-foreground text-sm">Loading...</p>}
-
-      {state === "error" && (
-        <div className="space-y-2">
-          <p className="text-muted-foreground text-sm">
-            Failed to load API keys. Check your connection and try again.
-          </p>
-          <Button variant="outline" onClick={() => void loadKeys()}>
-            Retry
-          </Button>
-        </div>
-      )}
-
-      {state === "ready" && keys.length === 0 && (
-        <p className="text-muted-foreground text-sm">
-          No API keys yet. Create one to start using the OpenAI-compatible endpoints.
-        </p>
-      )}
-
-      {state === "ready" &&
-        keys.map((key) => (
-          <div
-            key={key.token}
-            className="bg-popover/50 ring-border/50 flex flex-col gap-3 rounded-xl p-4 ring-1 sm:flex-row sm:items-center"
+    <div className="flex h-full flex-col">
+      <nav className="flex gap-1 overflow-x-auto px-2 py-2 lg:hidden">
+        {SECTIONS.map(({ id, label, icon: Icon }) => (
+          <Button
+            key={id}
+            variant={section === id ? "secondary" : "ghost"}
+            size="sm"
+            className="shrink-0"
+            onClick={() => setSection(id)}
           >
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary">{key.name}</Badge>
-              </div>
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-primary block max-w-full truncate font-mono text-xs underline-offset-4 hover:underline"
-                title={key.token}
-                onClick={() => void copyToken(key.token)}
-              >
-                {key.token}
-              </button>
-              <p className="text-muted-foreground text-xs">
-                Created {formatDate(key.createdAt)} · Last used{" "}
-                {key.lastUsedAt ? formatDate(key.lastUsedAt) : "—"}
-              </p>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                title="Copy key"
-                onClick={() => void copyToken(key.token)}
-              >
-                <Copy aria-hidden />
-              </Button>
-              <AlertDialog>
-                <AlertDialogTrigger
-                  render={
-                    <Button variant="outline" size="icon" title="Delete key">
-                      <Trash2 aria-hidden />
-                    </Button>
-                  }
-                />
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this API key?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      &quot;{key.name}&quot; will stop working immediately. This cannot
-                      be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void onDelete(key.token)}>
-                      Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </div>
+            <Icon aria-hidden />
+            {label}
+          </Button>
         ))}
+      </nav>
 
-      <Dialog
-        open={createOpen}
-        onOpenChange={(open) => {
-          setCreateOpen(open);
-          if (!open) {
-            setCreated(null);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{created ? "API key created" : "Create an API key"}</DialogTitle>
-            {!created && (
-              <DialogDescription>
-                Give the key a name so you can recognize it later.
-              </DialogDescription>
-            )}
-          </DialogHeader>
+      <div className="mx-auto flex w-full max-w-5xl flex-1 overflow-hidden">
+        <aside className="hidden w-56 shrink-0 space-y-1 border-r p-4 lg:block">
+          {SECTIONS.map(({ id, label, icon: Icon }) => (
+            <Button
+              key={id}
+              variant={section === id ? "secondary" : "ghost"}
+              className="w-full justify-start"
+              onClick={() => setSection(id)}
+            >
+              <Icon aria-hidden />
+              {label}
+            </Button>
+          ))}
+        </aside>
 
-          {created ? (
-            <div className="space-y-3">
+        <main className="flex-1 overflow-y-auto px-4 py-6 lg:px-8">
+          {state === "loading" && <p className="text-muted-foreground text-sm">Loading...</p>}
+
+          {state === "error" && (
+            <div className="space-y-2">
               <p className="text-muted-foreground text-sm">
-                Use this key as the Bearer token for the OpenAI-compatible endpoints:
+                Failed to load the admin console. Check your connection and try again.
               </p>
-              <div className="bg-muted flex items-center justify-between gap-2 rounded-md p-2">
-                <code className="font-mono text-xs break-all">{created.token}</code>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="Copy key"
-                  onClick={() => void copyToken(created.token)}
-                >
-                  <Copy aria-hidden />
-                </Button>
-              </div>
+              <Button variant="outline" onClick={() => void loadKeys()}>
+                Retry
+              </Button>
             </div>
-          ) : (
-            <form onSubmit={createForm.handleSubmit(onCreate)}>
-              <Controller
-                control={createForm.control}
-                name="name"
-                render={({ field, fieldState }) => (
-                  <Field data-invalid={fieldState.invalid}>
-                    <Input placeholder="key name, e.g. my-laptop" {...field} />
-                    {fieldState.error && <FieldError errors={[fieldState.error]} />}
-                  </Field>
-                )}
-              />
-              <DialogFooter className="mt-4">
-                <Button type="submit" disabled={creating}>
-                  {creating ? "Creating..." : "Create"}
-                </Button>
-              </DialogFooter>
-            </form>
           )}
 
-          {created && (
-            <DialogFooter>
-              <Button onClick={() => setCreateOpen(false)}>Done</Button>
-            </DialogFooter>
+          {state === "ready" && (
+            <>
+              <div className={section === "keys" ? "" : "hidden"}>
+                <ApiKeysSection keys={keys} onKeysChange={setKeys} />
+              </div>
+              <div className={section === "providers" ? "" : "hidden"}>
+                <ProviderSettingsSection />
+              </div>
+            </>
           )}
-        </DialogContent>
-      </Dialog>
+        </main>
+      </div>
     </div>
   );
 }

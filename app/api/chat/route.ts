@@ -15,7 +15,7 @@ import { parseJsonRequest, validateImageParts } from "@/lib/request-limits";
 const chatSchema = v.object({
   messages: v.pipe(v.array(v.unknown()), v.minLength(1), v.maxLength(MODEL_CONTEXT_MAX_MESSAGES)),
   model: v.pipe(v.string(), v.minLength(1)),
-  provider: v.picklist(["workers-ai", "google"]),
+  provider: v.picklist(["workers-ai", "google", "openai"]),
   search: v.optional(v.boolean()),
 });
 
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   let chatModel: ChatModel;
   try {
-    chatModel = createChatModel(catalogModel, { search });
+    chatModel = await createChatModel(catalogModel, { search });
   } catch (error) {
     if (error instanceof ProviderConfigurationError) {
       console.error(error.message);
