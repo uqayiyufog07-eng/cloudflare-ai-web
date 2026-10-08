@@ -23,6 +23,15 @@
 			"id": "5b7b8e6e9b7b460a94a65e8a1271d9c0"
 		}
 	],
+	"d1_databases": [
+		{
+			// Authoritative store for Conversation History (sessions + messages).
+			"binding": "DB",
+			"database_name": "cloudflare-ai-web",
+			"database_id": "6d28fc64-e3a6-4cd0-9c88-caab0882d4c0",
+			"migrations_dir": "migrations"
+		}
+	],
 	"images": {
 		// Enable image optimization
 		// see https://opennext.js.org/cloudflare/howtos/image
