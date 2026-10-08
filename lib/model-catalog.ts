@@ -9,12 +9,7 @@ import {
   type ModelType,
 } from "@/lib/models";
 import { getUpstreamModels } from "@/lib/provider-models";
-import {
-  getEnabledProviders,
-  getProviderSettings,
-  type ProviderId,
-  type ProviderSettings,
-} from "@/lib/provider-settings";
+import { getCustomProvider, listCustomProviders } from "@/lib/provider-settings";
 
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 const CATALOG_TIMEOUT_MS = 5_000;
@@ -242,20 +237,18 @@ const getTaskModels = async (task: CloudflareTask): Promise<Model[]> => {
 };
 
 export const getModelCatalog = async (): Promise<Model[]> => {
-  const [chatModels, imageModels, enabledProviders] = await Promise.all([
+  const [chatModels, imageModels, customProviders] = await Promise.all([
     getTaskModels("Text Generation"),
     getTaskModels("Text-to-Image"),
-    getEnabledProviders(),
+    listCustomProviders(),
   ]);
 
-  if (!enabledProviders) {
+  if (!customProviders) {
     return [...chatModels, ...imageModels, ...getExternalModels()];
   }
 
   const upstreamLists = await Promise.all(
-    (Object.entries(enabledProviders) as Array<[ProviderId, ProviderSettings]>).map(
-      ([provider, settings]) => getUpstreamModels(provider, settings),
-    ),
+    customProviders.map((provider) => getUpstreamModels(provider)),
   );
 
   // Upstream entries win over the legacy environment-driven external list.
@@ -272,17 +265,40 @@ export const getModelCatalog = async (): Promise<Model[]> => {
   return [...chatModels, ...imageModels, ...external];
 };
 
-export const getCatalogModel = async (id: string, type: ModelType, provider: Model["provider"]) => {
-  if (provider !== "workers-ai") {
-    // Admin-configured settings win; Google falls back to the legacy list.
-    const settings = await getProviderSettings(provider);
-    if (settings) {
-      const model = (await getUpstreamModels(provider, settings)).find(
+/**
+ * Finds a chat/image model served by any enabled custom provider, scanning
+ * providers in their stored order. Falls back to the legacy environment-driven
+ * external list (e.g. Gemini via the AI Gateway).
+ */
+export const findExternalCatalogModel = async (
+  id: string,
+  type: ModelType,
+): Promise<Model | undefined> => {
+  const providers = await listCustomProviders();
+  if (providers) {
+    for (const provider of providers) {
+      const hit = (await getUpstreamModels(provider)).find(
         (model) => model.id === id && model.type === type,
       );
-      if (model) {
-        return model;
+      if (hit) {
+        return hit;
       }
+    }
+  }
+
+  return getExternalModels().find((model) => model.id === id && model.type === type);
+};
+
+export const getCatalogModel = async (id: string, type: ModelType, provider: Model["provider"]) => {
+  if (provider !== "workers-ai") {
+    // Admin-configured custom providers win; the legacy "google" id still
+    // resolves through the AI Gateway environment variables when no custom
+    // provider with that id exists.
+    const custom = await getCustomProvider(provider);
+    if (custom) {
+      return (await getUpstreamModels(custom)).find(
+        (model) => model.id === id && model.type === type,
+      );
     }
     if (provider === "google") {
       return getExternalModels().find((model) => model.id === id && model.type === type);

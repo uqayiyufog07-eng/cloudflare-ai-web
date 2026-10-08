@@ -1,12 +1,12 @@
 "use client";
 
-import { useLiveQuery } from "dexie-react-hooks";
 import { ImageIcon, MoreHorizontal, Plus } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import LoadingIndicator from "@/components/loading-indicator";
 import { ThemeSwitcher } from "@/components/theme-switcher";
+import { toast } from "@/components/ui/toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,16 +37,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import {
-  clearImageHistory,
-  deleteConversation,
-  listRecentSessions,
-} from "@/lib/conversation-store";
-import type { Session } from "@/lib/db";
+import { clearImageHistory } from "@/lib/conversation-store";
+import { deleteConversation, type RemoteSession } from "@/lib/conversation-api";
+import { useConversationSessions } from "@/hooks/use-conversation-sessions";
 
 interface GroupedSessions {
   type: "today" | "last 7 days" | "last 30 days" | "earlier";
-  sessions: Session[];
+  sessions: RemoteSession[];
 }
 
 const AppSidebar = () => {
@@ -58,7 +55,7 @@ const AppSidebar = () => {
   >(null);
   const pathname = usePathname();
 
-  const sessions = useLiveQuery(listRecentSessions);
+  const { sessions } = useConversationSessions();
 
   const groupedSessions = useMemo(
     () =>
@@ -99,7 +96,12 @@ const AppSidebar = () => {
       setDeleteConfirmOpen(false);
       return;
     }
-    await deleteConversation(deleteTarget.sessionId);
+    try {
+      await deleteConversation(deleteTarget.sessionId);
+    } catch {
+      toast.add({ title: "Unable to delete the conversation.", type: "error" });
+      return;
+    }
     setDeleteConfirmOpen(false);
     router.push("/");
   };

@@ -1,5 +1,21 @@
 # Changelog
 
+## 5.2.0
+
+### Added
+
+- **Cloud-synced Conversation History**: text conversations (sessions and messages) are stored in Cloudflare D1 and shared across every device signed in with the same `APP_PASSWORD`. New REST API under `/api/conversations` (list, create, load, append, delete), protected by the same Access Session cookie as the other `/api` routes. The sidebar refreshes on changes and when the window regains focus.
+- D1 binding `DB` in `wrangler.jsonc` with SQL migrations under `migrations/`; `initOpenNextCloudflareForDev()` in `next.config.ts` exposes the binding to `next dev`.
+
+### Changed
+
+- Conversation History moves from browser-only IndexedDB to D1: the Dexie schema upgrades to v4 and drops the `session` table. Local text conversations from older versions are not migrated; Image History (`/image`, including generated blobs) stays in IndexedDB.
+- Conversation names are derived on the server from the first text part (first 20 characters).
+
+### Notes
+
+- The D1 binding is required to start or load a conversation. When it is missing (e.g. Vercel/Docker images), the endpoints return 503 and the UI shows an error instead of writing data locally. Run the local and remote migrations before deploying (see README).
+
 ## 5.1.0
 
 ### Changed

@@ -159,11 +159,7 @@ export async function POST(request: Request) {
   };
 
   if (body.stream) {
-    return createStreamingResponse(
-      result,
-      base,
-      body.stream_options?.include_usage ?? false,
-    );
+    return createStreamingResponse(result, base, body.stream_options?.include_usage ?? false);
   }
 
   try {

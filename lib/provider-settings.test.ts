@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
-  deleteProviderSettings,
-  getEnabledProviders,
-  getProviderSettings,
-  saveProviderSettings,
+  deleteCustomProvider,
+  generateProviderId,
+  getCustomProvider,
+  listCustomProviders,
+  saveCustomProvider,
+  type CustomProvider,
 } from "@/lib/provider-settings";
 
 class FakeKv {
@@ -50,63 +52,117 @@ mock.module("@opennextjs/cloudflare", () => ({
   },
 }));
 
+const makeProvider = (overrides: Partial<CustomProvider> = {}): CustomProvider => ({
+  id: "aimixhub",
+  name: "aimixhub",
+  style: "openai",
+  enabled: true,
+  apiKey: "sk-upstream",
+  baseUrl: "https://aihubmix.com/v1",
+  models: ["gpt-5.2", "claude-x"],
+  createdAt: "2026-10-07T00:00:00.000Z",
+  ...overrides,
+});
+
 beforeEach(() => {
   fakeKv = new FakeKv();
   contextRef.env = { API_KEYS: fakeKv };
 });
 
 describe("with a KV namespace", () => {
-  test("saveProviderSettings stores and getProviderSettings round-trips", async () => {
-    const saved = await saveProviderSettings("openai", {
-      apiKey: "sk-upstream",
-      baseUrl: "https://aihubmix.com/v1",
-      models: ["gpt-5.2", "claude-x"],
-    });
-    expect(saved).toBe(true);
+  test("saveCustomProvider stores and getCustomProvider round-trips", async () => {
+    const provider = makeProvider();
+    expect(await saveCustomProvider(provider)).toBe(true);
 
-    expect(await getProviderSettings("openai")).toEqual({
-      apiKey: "sk-upstream",
-      baseUrl: "https://aihubmix.com/v1",
-      models: ["gpt-5.2", "claude-x"],
-    });
+    expect(await fakeKv.get("settings:provider:aimixhub")).not.toBeNull();
+    expect(await getCustomProvider("aimixhub")).toEqual(provider);
   });
 
-  test("getProviderSettings returns null for a miss and rejects malformed values", async () => {
-    expect(await getProviderSettings("google")).toBeNull();
+  test("getCustomProvider returns null for a miss and rejects malformed values", async () => {
+    expect(await getCustomProvider("missing")).toBeNull();
 
-    await fakeKv.put("settings:openai", "not-json");
-    expect(await getProviderSettings("openai")).toBeNull();
-
-    await fakeKv.put("settings:google", JSON.stringify({ baseUrl: "https://example.com" }));
-    expect(await getProviderSettings("google")).toBeNull();
+    await fakeKv.put("settings:provider:bad", "not-json");
+    expect(await getCustomProvider("bad")).toBeNull();
 
     await fakeKv.put(
-      "settings:openai",
-      JSON.stringify({ apiKey: "sk-x", models: ["valid", 42, "", null] }),
+      "settings:provider:bad2",
+      JSON.stringify({ id: "bad2", name: "x", style: "webdav", apiKey: "k" }),
     );
-    expect(await getProviderSettings("openai")).toEqual({ apiKey: "sk-x", models: ["valid"] });
+    expect(await getCustomProvider("bad2")).toBeNull();
   });
 
-  test("getEnabledProviders returns only configured providers", async () => {
-    expect(await getEnabledProviders()).toEqual({});
-
-    await saveProviderSettings("openai", { apiKey: "sk-openai" });
-    expect(await getEnabledProviders()).toEqual({ openai: { apiKey: "sk-openai" } });
-
-    await saveProviderSettings("google", { apiKey: "goog", models: ["gemini-x"] });
-    expect(await getEnabledProviders()).toEqual({
-      openai: { apiKey: "sk-openai" },
-      google: { apiKey: "goog", models: ["gemini-x"] },
+  test("getCustomProvider sanitizes stored values", async () => {
+    await fakeKv.put(
+      "settings:provider:p",
+      JSON.stringify({
+        id: "p",
+        name: "  p  ",
+        style: "openai",
+        apiKey: "k",
+        baseUrl: "  https://example.com/v1  ",
+        models: ["valid", 42, "", null],
+        enabled: false,
+      }),
+    );
+    expect(await getCustomProvider("p")).toEqual({
+      id: "p",
+      name: "p",
+      style: "openai",
+      enabled: false,
+      apiKey: "k",
+      baseUrl: "https://example.com/v1",
+      models: ["valid"],
+      createdAt: "",
     });
   });
 
-  test("deleteProviderSettings is idempotent", async () => {
-    await saveProviderSettings("google", { apiKey: "k" });
+  test("listCustomProviders returns stored providers sorted by creation time", async () => {
+    await saveCustomProvider(makeProvider({ id: "b", name: "b", createdAt: "2026-10-07T02:00:00Z" }));
+    await saveCustomProvider(makeProvider({ id: "a", name: "a", createdAt: "2026-10-07T01:00:00Z" }));
 
-    expect(await deleteProviderSettings("google")).toBe(true);
-    expect(await getProviderSettings("google")).toBeNull();
+    expect((await listCustomProviders())?.map((provider) => provider.id)).toEqual(["a", "b"]);
+  });
 
-    expect(await deleteProviderSettings("google")).toBe(true);
+  test("listCustomProviders migrates legacy settings:openai and settings:google once", async () => {
+    await fakeKv.put(
+      "settings:openai",
+      JSON.stringify({ apiKey: "sk-legacy", baseUrl: "https://relay.example/v1", models: ["gpt-x"] }),
+    );
+    await fakeKv.put("settings:google", "not-json");
+
+    const providers = await listCustomProviders();
+    expect(providers).toEqual([
+      {
+        id: "openai",
+        name: "OpenAI",
+        style: "openai",
+        enabled: true,
+        apiKey: "sk-legacy",
+        baseUrl: "https://relay.example/v1",
+        models: ["gpt-x"],
+        createdAt: expect.any(String),
+      },
+    ]);
+
+    // Legacy keys are gone and the second listing does not resurrect anything.
+    expect(await fakeKv.get("settings:openai")).toBeNull();
+    expect(await fakeKv.get("settings:google")).toBeNull();
+    expect((await listCustomProviders())?.map((provider) => provider.id)).toEqual(["openai"]);
+  });
+
+  test("deleteCustomProvider is idempotent", async () => {
+    await saveCustomProvider(makeProvider());
+    expect(await deleteCustomProvider("aimixhub")).toBe(true);
+    expect(await getCustomProvider("aimixhub")).toBeNull();
+    expect(await deleteCustomProvider("aimixhub")).toBe(true);
+  });
+});
+
+describe("generateProviderId", () => {
+  test("slugifies names and avoids collisions", () => {
+    expect(generateProviderId("New API!", [])).toBe("new-api");
+    expect(generateProviderId("New API", ["new-api"])).toMatch(/^new-api-[a-f0-9]{4}$/);
+    expect(generateProviderId("中文", [])).toBe("provider");
   });
 });
 
@@ -116,10 +172,10 @@ describe("without a KV namespace", () => {
   });
 
   test("all operations degrade gracefully", async () => {
-    expect(await getProviderSettings("openai")).toBeUndefined();
-    expect(await getEnabledProviders()).toBeUndefined();
-    expect(await saveProviderSettings("openai", { apiKey: "k" })).toBe(false);
-    expect(await deleteProviderSettings("openai")).toBe(false);
+    expect(await getCustomProvider("openai")).toBeUndefined();
+    expect(await listCustomProviders()).toBeUndefined();
+    expect(await saveCustomProvider(makeProvider())).toBe(false);
+    expect(await deleteCustomProvider("openai")).toBe(false);
   });
 });
 
@@ -128,8 +184,8 @@ test("without a Cloudflare context all operations degrade gracefully", async () 
   contextRef.env = null;
 
   try {
-    expect(await getProviderSettings("openai")).toBeUndefined();
-    expect(await getEnabledProviders()).toBeUndefined();
+    expect(await getCustomProvider("openai")).toBeUndefined();
+    expect(await listCustomProviders()).toBeUndefined();
   } finally {
     contextRef.env = savedEnv;
   }

@@ -1,13 +1,10 @@
 import type { UIMessage } from "ai";
 import Dexie, { type EntityTable } from "dexie";
 
-export interface Session {
-  id: string;
-  name: string;
-  updatedAt: Date;
-}
-
-/** A message as persisted in IndexedDB, for both Conversation History and Image History. */
+/**
+ * A message as persisted in IndexedDB. Since v4 only Image History uses Dexie
+ * (rows with sessionId "image"); Conversation History lives in Cloudflare D1.
+ */
 export type StoredMessage = UIMessage & {
   sessionId: string;
   createdAt: Date;
@@ -24,13 +21,14 @@ export interface ImageUrlsData {
 }
 
 export const db = new Dexie("CF_AI_DB") as Dexie & {
-  session: EntityTable<Session, "id">;
   message: EntityTable<StoredMessage, "id">;
 };
 
 // v1: initial schema (has a stray space and unique createdAt constraint)
 // v2: removed unique createdAt constraint and fixed the stray space in sessionId index
 // v3: added [sessionId+createdAt] so the newest messages of a session load in order
+// v4: Conversation History moved to Cloudflare D1. The session table is omitted,
+//     so Dexie drops it on upgrade; only Image History rows (sessionId "image") stay.
 db.version(1).stores({
   session: "&id, name, updatedAt",
   message: "&id, sessionId ,role, metadata, parts, &createdAt",
@@ -43,5 +41,11 @@ db.version(2).stores({
 
 db.version(3).stores({
   session: "&id, name, updatedAt",
+  message: "&id, sessionId, role, metadata, parts, createdAt, [sessionId+createdAt]",
+});
+
+db.version(4).stores({
+  // Explicit null drops the table (omitting it would leave it untouched).
+  session: null,
   message: "&id, sessionId, role, metadata, parts, createdAt, [sessionId+createdAt]",
 });

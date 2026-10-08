@@ -1,4 +1,10 @@
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 import type { NextConfig } from "next";
+
+// Makes Cloudflare bindings (including the D1 `DB` binding) available to
+// `next dev` via getPlatformProxy. next.config never enters the worker bundle,
+// so this does not run in wrangler dev / production.
+initOpenNextCloudflareForDev();
 
 export function createNextConfig(isVercel: boolean): NextConfig {
   return {

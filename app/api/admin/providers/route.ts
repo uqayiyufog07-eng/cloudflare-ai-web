@@ -1,11 +1,13 @@
 import * as v from "valibot";
 import { requireAdmin } from "@/lib/auth";
 import {
-  deleteProviderSettings,
-  getEnabledProviders,
-  saveProviderSettings,
-  type ProviderId,
-  type ProviderSettings,
+  generateProviderId,
+  listCustomProviders,
+  PROVIDER_ID_PATTERN,
+  RESERVED_PROVIDER_IDS,
+  saveCustomProvider,
+  type CustomProvider,
+  type ProviderStyle,
 } from "@/lib/provider-settings";
 import { parseJsonRequest } from "@/lib/request-limits";
 
@@ -30,9 +32,12 @@ const httpUrl = v.pipe(
   }, "Must be a valid http(s) URL"),
 );
 
-const providerSettingsSchema = v.object({
-  apiKey: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(512)),
+const createProviderSchema = v.object({
+  name: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(64)),
+  style: v.picklist(["openai", "gemini"]),
+  apiKey: v.optional(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(512))),
   baseUrl: v.optional(httpUrl),
+  enabled: v.optional(v.boolean()),
   models: v.optional(
     v.pipe(
       v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(128))),
@@ -41,26 +46,18 @@ const providerSettingsSchema = v.object({
   ),
 });
 
-const putSchema = v.object({
-  openai: v.optional(v.union([providerSettingsSchema, v.null()])),
-  google: v.optional(v.union([providerSettingsSchema, v.null()])),
-});
-
-const normalizeSettings = (
-  input: v.InferOutput<typeof providerSettingsSchema>,
-): ProviderSettings => {
-  const models = input.models ? [...new Set(input.models)] : undefined;
-  return {
-    apiKey: input.apiKey,
-    ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
-    ...(models && models.length > 0 ? { models } : {}),
-  };
-};
-
 const notConfiguredResponse = () =>
   new Response("Provider settings storage is not configured for this deployment.", {
     status: 503,
   });
+
+const normalizeModels = (models?: string[]) => {
+  if (!models) {
+    return undefined;
+  }
+  const deduped = [...new Set(models)];
+  return deduped.length > 0 ? deduped : undefined;
+};
 
 export async function GET(request: Request) {
   const denied = await requireAdmin(request);
@@ -68,7 +65,7 @@ export async function GET(request: Request) {
     return denied;
   }
 
-  const providers = await getEnabledProviders();
+  const providers = await listCustomProviders();
   if (!providers) {
     return notConfiguredResponse();
   }
@@ -76,35 +73,51 @@ export async function GET(request: Request) {
   return Response.json({ providers });
 }
 
-export async function PUT(request: Request) {
+export async function POST(request: Request) {
   const denied = await requireAdmin(request);
   if (denied) {
     return denied;
   }
 
-  const parsed = await parseJsonRequest(request, putSchema, MAX_BODY_BYTES);
+  const parsed = await parseJsonRequest(request, createProviderSchema, MAX_BODY_BYTES);
   if (!parsed.ok) {
     return parsed.response;
   }
 
-  const updates: Array<[ProviderId, ProviderSettings | null]> = [];
-  if (parsed.data.openai !== undefined) {
-    updates.push(["openai", parsed.data.openai]);
-  }
-  if (parsed.data.google !== undefined) {
-    updates.push(["google", parsed.data.google]);
+  const existing = await listCustomProviders();
+  if (!existing) {
+    return notConfiguredResponse();
   }
 
-  for (const [provider, settings] of updates) {
-    const saved =
-      settings === null
-        ? await deleteProviderSettings(provider)
-        : await saveProviderSettings(provider, normalizeSettings(settings));
-    if (!saved) {
-      return notConfiguredResponse();
-    }
+  if (existing.some((provider) => provider.name.toLowerCase() === parsed.data.name.toLowerCase())) {
+    return new Response("A provider with this name already exists.", { status: 409 });
   }
 
-  const providers = await getEnabledProviders();
-  return Response.json({ providers });
+  const id = generateProviderId(
+    parsed.data.name,
+    existing.map((provider) => provider.id),
+  );
+  if (!PROVIDER_ID_PATTERN.test(id) || RESERVED_PROVIDER_IDS.includes(id)) {
+    return new Response("Invalid provider id.", { status: 400 });
+  }
+
+  const provider: CustomProvider = {
+    id,
+    name: parsed.data.name,
+    style: parsed.data.style as ProviderStyle,
+    enabled: parsed.data.enabled ?? true,
+    apiKey: parsed.data.apiKey ?? "",
+    ...(parsed.data.baseUrl ? { baseUrl: parsed.data.baseUrl } : {}),
+    ...(normalizeModels(parsed.data.models)
+      ? { models: normalizeModels(parsed.data.models) }
+      : {}),
+    createdAt: new Date().toISOString(),
+  };
+
+  const saved = await saveCustomProvider(provider);
+  if (!saved) {
+    return notConfiguredResponse();
+  }
+
+  return Response.json({ provider }, { status: 201 });
 }

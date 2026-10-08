@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createChatModel, ProviderConfigurationError } from "@/lib/providers";
 import type { Model } from "@/lib/models";
-import type { ProviderSettings } from "@/lib/provider-settings";
+import type { CustomProvider } from "@/lib/provider-settings";
 
 class FakeKv {
   store = new Map<string, string>();
@@ -51,16 +51,28 @@ const ENV_KEYS = [
 
 let savedEnv: Record<string, string | undefined> = {};
 
-const openaiModel: Model = {
+const relayModel: Model = {
   id: "gpt-4o-mini",
   name: "gpt-4o-mini",
   brand: "OpenAI",
   type: "Text Generation",
-  provider: "openai",
+  provider: "relay",
+  providerName: "My Relay",
   source: "external",
 };
 
-const googleModel: Model = {
+const geminiModel: Model = {
+  id: "gemini-2.5-pro",
+  name: "gemini-2.5-pro",
+  brand: "Google",
+  type: "Text Generation",
+  input: ["image", "search"],
+  provider: "gemini-direct",
+  providerName: "Gemini Direct",
+  source: "external",
+};
+
+const legacyGoogleModel: Model = {
   id: "gemini-3.6-flash",
   name: "gemini-3.6-flash",
   brand: "Google",
@@ -79,8 +91,8 @@ const workersModel: Model = {
   source: "cloudflare",
 };
 
-const putSettings = async (provider: string, settings: ProviderSettings) => {
-  await fakeKv.put(`settings:${provider}`, JSON.stringify(settings));
+const putProvider = async (provider: CustomProvider) => {
+  await fakeKv.put(`settings:provider:${provider.id}`, JSON.stringify(provider));
 };
 
 beforeEach(() => {
@@ -107,58 +119,86 @@ afterEach(() => {
   contextRef.env = null;
 });
 
-describe("createChatModel with the OpenAI-compatible provider", () => {
-  test("uses the admin-configured settings", async () => {
-    await putSettings("openai", { apiKey: "sk-upstream", baseUrl: "https://aihubmix.com/v1" });
+describe("createChatModel with an OpenAI-style custom provider", () => {
+  test("uses the stored settings", async () => {
+    await putProvider({
+      id: "relay",
+      name: "My Relay",
+      style: "openai",
+      enabled: true,
+      apiKey: "sk-upstream",
+      baseUrl: "https://aihubmix.com/v1",
+      createdAt: "2026-10-07T00:00:00.000Z",
+    });
 
-    const chat = await createChatModel(openaiModel, {});
+    const chat = await createChatModel(relayModel, {});
     expect(chat.model.modelId).toBe("gpt-4o-mini");
     expect(chat.tools).toBeUndefined();
   });
 
   test("throws when the provider is not configured", async () => {
-    await expect(createChatModel(openaiModel, {})).rejects.toBeInstanceOf(
+    await expect(createChatModel(relayModel, {})).rejects.toBeInstanceOf(
       ProviderConfigurationError,
-    );
-    await expect(createChatModel(openaiModel, {})).rejects.toThrow(
-      "The OpenAI-compatible provider is not configured",
     );
   });
 
   test("throws when no KV store is configured", async () => {
     contextRef.env = {};
     try {
-      await expect(createChatModel(openaiModel, {})).rejects.toBeInstanceOf(
+      await expect(createChatModel(relayModel, {})).rejects.toBeInstanceOf(
         ProviderConfigurationError,
       );
     } finally {
       contextRef.env = { API_KEYS: fakeKv };
     }
   });
+
+  test("throws when the provider is disabled", async () => {
+    await putProvider({
+      id: "relay",
+      name: "My Relay",
+      style: "openai",
+      enabled: false,
+      apiKey: "sk-upstream",
+      createdAt: "2026-10-07T00:00:00.000Z",
+    });
+
+    await expect(createChatModel(relayModel, {})).rejects.toThrow("is disabled");
+  });
 });
 
-describe("createChatModel with the Google provider", () => {
-  test("prefers the admin-configured settings without env variables", async () => {
-    await putSettings("google", { apiKey: "goog-key", baseUrl: "https://example.com/v1beta" });
+describe("createChatModel with a Gemini-style custom provider", () => {
+  test("uses the stored settings and supports the search tool", async () => {
+    await putProvider({
+      id: "gemini-direct",
+      name: "Gemini Direct",
+      style: "gemini",
+      enabled: true,
+      apiKey: "goog-key",
+      baseUrl: "https://example.com/v1beta",
+      createdAt: "2026-10-07T00:00:00.000Z",
+    });
 
-    const chat = await createChatModel(googleModel, { search: true });
-    expect(chat.model.modelId).toBe("gemini-3.6-flash");
+    const chat = await createChatModel(geminiModel, { search: true });
+    expect(chat.model.modelId).toBe("gemini-2.5-pro");
     expect(chat.tools?.google_search).toBeDefined();
   });
+});
 
+describe("createChatModel with the legacy Google gateway fallback", () => {
   test("falls back to the AI Gateway environment variables", async () => {
     process.env.GOOGLE_API_KEY = "gateway-key";
     process.env.CF_ACCOUNT_ID = "account";
     process.env.CF_AI_GATEWAY_NAME = "gateway";
     process.env.CF_AI_GATEWAY_TOKEN = "token";
 
-    const chat = await createChatModel(googleModel, {});
+    const chat = await createChatModel(legacyGoogleModel, {});
     expect(chat.model.modelId).toBe("gemini-3.6-flash");
     expect(chat.tools).toBeUndefined();
   });
 
-  test("throws when neither settings nor env variables exist", async () => {
-    await expect(createChatModel(googleModel, {})).rejects.toThrow(
+  test("throws when neither a custom provider nor env variables exist", async () => {
+    await expect(createChatModel(legacyGoogleModel, {})).rejects.toThrow(
       "Missing required environment variable: GOOGLE_API_KEY",
     );
   });

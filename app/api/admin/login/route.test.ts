@@ -28,9 +28,7 @@ test("login returns 503 when no admin password is configured", async () => {
   delete process.env.ADMIN_PASSWORD;
   delete process.env.APP_PASSWORD;
   try {
-    const response = await login(
-      loginRequest({ body: JSON.stringify({ password: "x" }) }),
-    );
+    const response = await login(loginRequest({ body: JSON.stringify({ password: "x" }) }));
     expect(response.status).toBe(503);
   } finally {
     if (originalAdmin === undefined) {
@@ -60,9 +58,7 @@ test("login rejects cross-site requests with 403", async () => {
 
 test("login rejects a wrong password with 401", async () => {
   await withEnvPassword(async () => {
-    const response = await login(
-      loginRequest({ body: JSON.stringify({ password: "wrong" }) }),
-    );
+    const response = await login(loginRequest({ body: JSON.stringify({ password: "wrong" }) }));
     expect(response.status).toBe(401);
   });
 });

@@ -31,10 +31,7 @@ interface KvNamespace {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { metadata?: unknown }): Promise<void>;
   delete(key: string): Promise<void>;
-  list(options?: {
-    prefix?: string;
-    cursor?: string;
-  }): Promise<{
+  list(options?: { prefix?: string; cursor?: string }): Promise<{
     keys: Array<{ name: string; metadata?: unknown }>;
     list_complete: boolean;
     cursor?: string;
@@ -184,9 +181,7 @@ export const touchApiKey = async (token: string, record: ApiKeyRecord): Promise<
     }
 
     const updated: ApiKeyRecord = { ...record, lastUsedAt: new Date().toISOString() };
-    ctx.waitUntil(
-      namespace.put(buildKey(token), JSON.stringify(updated), { metadata: updated }),
-    );
+    ctx.waitUntil(namespace.put(buildKey(token), JSON.stringify(updated), { metadata: updated }));
   } catch {
     // Best-effort telemetry; failures must not affect the request.
   }

@@ -115,8 +115,8 @@ export default function ApiKeysSection({
           <p className="text-muted-foreground text-sm">
             Bearer keys for the OpenAI-compatible endpoints (
             <code className="font-mono text-xs">/v1/chat/completions</code>,{" "}
-            <code className="font-mono text-xs">/v1/models</code>). Newly created keys may
-            take a few seconds to become active.
+            <code className="font-mono text-xs">/v1/models</code>). Newly created keys may take a
+            few seconds to become active.
           </p>
         </div>
         <Button

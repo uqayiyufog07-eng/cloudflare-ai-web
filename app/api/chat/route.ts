@@ -15,7 +15,7 @@ import { parseJsonRequest, validateImageParts } from "@/lib/request-limits";
 const chatSchema = v.object({
   messages: v.pipe(v.array(v.unknown()), v.minLength(1), v.maxLength(MODEL_CONTEXT_MAX_MESSAGES)),
   model: v.pipe(v.string(), v.minLength(1)),
-  provider: v.picklist(["workers-ai", "google", "openai"]),
+  provider: v.pipe(v.string(), v.minLength(1), v.maxLength(64)),
   search: v.optional(v.boolean()),
 });
 

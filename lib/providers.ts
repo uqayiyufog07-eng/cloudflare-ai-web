@@ -7,7 +7,7 @@ import { createWorkersAI } from "workers-ai-provider";
 import { createWorkersAIFetch } from "@/lib/workers-ai-fetch";
 import type { Model } from "@/lib/models";
 import { DEFAULT_BASE_URLS } from "@/lib/provider-models";
-import { getProviderSettings, type ProviderSettings } from "@/lib/provider-settings";
+import { getCustomProvider, type CustomProvider } from "@/lib/provider-settings";
 
 export class ProviderConfigurationError extends Error {
   constructor(message: string) {
@@ -77,10 +77,10 @@ const getGoogleGatewayProviders = () => {
   return { gateway, google };
 };
 
-const getGoogleDirectProvider = (settings: ProviderSettings) =>
+const getGoogleDirectProvider = (apiKey: string, baseUrl?: string) =>
   createGoogleGenerativeAI({
-    apiKey: settings.apiKey,
-    ...(settings.baseUrl ? { baseURL: settings.baseUrl } : {}),
+    apiKey,
+    ...(baseUrl ? { baseURL: baseUrl } : {}),
   });
 
 type GoogleSearchTool = ReturnType<
@@ -92,59 +92,77 @@ export interface ChatModel {
   tools?: { google_search: GoogleSearchTool };
 }
 
+const createCustomProviderChatModel = (
+  provider: CustomProvider,
+  catalogModel: Model,
+): ChatModel => {
+  if (provider.style === "gemini") {
+    const google = getGoogleDirectProvider(
+      provider.apiKey,
+      provider.baseUrl ?? DEFAULT_BASE_URLS.gemini,
+    );
+    return { model: google.chat(catalogModel.id) };
+  }
+
+  const openai = createOpenAICompatible({
+    name: provider.id,
+    baseURL: provider.baseUrl ?? DEFAULT_BASE_URLS.openai,
+    apiKey: provider.apiKey,
+  });
+  return { model: openai.chatModel(catalogModel.id) };
+};
+
 /**
  * Resolves a catalog model to the language model that serves it.
- * OpenAI-compatible models always come from the admin-configured settings on
- * the /admin Providers page. Google models prefer those settings too and fall
- * back to the AI Gateway environment variables. Throws
+ * Custom providers configured on the /admin 模型服务 page are served with
+ * their stored OpenAI/Gemini integration style. The legacy "google" model id
+ * still falls back to the AI Gateway environment variables. Throws
  * ProviderConfigurationError when the selected provider is not configured.
  */
 export const createChatModel = async (
   catalogModel: Model,
   options: { search?: boolean },
 ): Promise<ChatModel> => {
-  switch (catalogModel.provider) {
-    case "openai": {
-      const settings = await getProviderSettings("openai");
-      if (!settings) {
-        throw new ProviderConfigurationError(
-          "The OpenAI-compatible provider is not configured. Set it up on the /admin Providers page.",
-        );
-      }
-
-      const openai = createOpenAICompatible({
-        name: "openai",
-        baseURL: settings.baseUrl ?? DEFAULT_BASE_URLS.openai,
-        apiKey: settings.apiKey,
-      });
-      return { model: openai.chatModel(catalogModel.id) };
-    }
-    case "google": {
-      const settings = await getProviderSettings("google");
-      if (settings) {
-        const google = getGoogleDirectProvider(settings);
-        return {
-          model: google.chat(catalogModel.id),
-          tools: options.search ? { google_search: google.tools.googleSearch({}) } : undefined,
-        };
-      }
-
-      const { gateway, google } = getGoogleGatewayProviders();
-      return {
-        model: gateway([google.chat(catalogModel.id)]),
-        tools: options.search ? { google_search: google.tools.googleSearch({}) } : undefined,
-      };
-    }
-    case "workers-ai": {
-      const workerModel = getWorkersAIProvider().chat(catalogModel.id);
-      return {
-        model: catalogModel.reasoning
-          ? wrapLanguageModel({
-              model: workerModel,
-              middleware: extractReasoningMiddleware({ tagName: "think" }),
-            })
-          : workerModel,
-      };
-    }
+  if (catalogModel.provider === "workers-ai") {
+    const workerModel = getWorkersAIProvider().chat(catalogModel.id);
+    return {
+      model: catalogModel.reasoning
+        ? wrapLanguageModel({
+            model: workerModel,
+            middleware: extractReasoningMiddleware({ tagName: "think" }),
+          })
+        : workerModel,
+    };
   }
+
+  const configured = await getCustomProvider(catalogModel.provider);
+  if (configured) {
+    if (!configured.enabled) {
+      throw new ProviderConfigurationError(
+        `The "${configured.name}" provider is disabled. Enable it on the /admin 模型服务 page.`,
+      );
+    }
+    const chat = createCustomProviderChatModel(configured, catalogModel);
+    if (configured.style === "gemini" && options.search) {
+      const google = getGoogleDirectProvider(
+        configured.apiKey,
+        configured.baseUrl ?? DEFAULT_BASE_URLS.gemini,
+      );
+      return { ...chat, tools: { google_search: google.tools.googleSearch({}) } };
+    }
+    return chat;
+  }
+
+  // Legacy environment-driven path (Google models via the AI Gateway).
+  if (catalogModel.provider === "google") {
+    const { gateway, google } = getGoogleGatewayProviders();
+    return {
+      model: gateway([google.chat(catalogModel.id)]),
+      tools: options.search ? { google_search: google.tools.googleSearch({}) } : undefined,
+    };
+  }
+
+  throw new ProviderConfigurationError(
+    "The selected provider is not configured. Add it on the /admin 模型服务 page.",
+  );
 };

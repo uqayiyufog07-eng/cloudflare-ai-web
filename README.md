@@ -30,7 +30,7 @@ docker run -d --name cloudflare-ai-web \
 - 使用 Cloudflare Workers AI 快速搭建多模型AI平台
 - 支持 Cloudflare AI Gateway 接入Gemini等模型
 - 支持 Serverless 快速部署
-- 聊天记录本地存储
+- 文本对话历史云端存储（Cloudflare D1），持同一访问密码的多台设备共享；图片生成历史仍保存在浏览器本地
 - 图片附件在浏览器内自动压缩（长边不超过 1568px，单张不超过 512 KiB，每次请求最多 5 张），请求体积满足 Vercel Functions 限制
 - 支持 Access Session（访问密码）保护
 - 提供标准 OpenAI 格式的 API（`/v1/models`、`/v1/chat/completions`），可直接接入 OpenAI 客户端
@@ -41,10 +41,10 @@ docker run -d --name cloudflare-ai-web \
 
 本应用暴露以下 OpenAI 兼容端点，模型名与 `GET /v1/models` 返回的 `id` 一致：
 
-| 端点                     | 说明                                   |
-| ------------------------ | -------------------------------------- |
-| `GET /v1/models`         | 列出可用的文本生成模型                 |
-| `GET /v1/models/{id}`    | 查询单个模型                           |
+| 端点                        | 说明                                       |
+| --------------------------- | ------------------------------------------ |
+| `GET /v1/models`            | 列出可用的文本生成模型                     |
+| `GET /v1/models/{id}`       | 查询单个模型                               |
 | `POST /v1/chat/completions` | 聊天补全，支持 `stream` 流式输出与图像输入 |
 
 认证方式为 `Authorization: Bearer <API Key>`。API Key 的匹配优先级：
@@ -70,7 +70,7 @@ curl https://your-domain.com/v1/chat/completions \
 
 ## 管理控制台（/admin）
 
-`/admin` 页面左侧导航分为两个分区，登录密码取 `ADMIN_PASSWORD`；未设置时回退到 `APP_PASSWORD`；两者都未设置时该页面显示"未配置"状态。
+`/admin` 页面左侧导航包含「设置 - 模型服务」「API 网关 - API 密钥」和「关于我们」。登录密码取 `ADMIN_PASSWORD`；未设置时回退到 `APP_PASSWORD`；两者都未设置时该页面显示"未配置"状态。
 
 ### API Keys
 
@@ -80,14 +80,16 @@ curl https://your-domain.com/v1/chat/completions \
 - 删除密钥立即失效（同样有数秒的传播延迟）
 - 列表会显示每个密钥的名称、创建时间和最后使用时间（每分钟最多更新一次）
 
-### Providers（上游模型服务）
+### 模型服务（上游模型平台）
 
-无需重新部署即可配置上游聊天模型服务，保存后模型立即出现在网页模型目录和 `/v1/models` 中：
+以三栏界面管理上游模型平台，**不预置任何服务商**，全部由你自行添加，保存后模型立即出现在网页模型目录和 `/v1/models` 中：
 
-- **OpenAI**：支持任意 OpenAI 兼容端点，可修改 API 地址（如 `https://aihubmix.com/v1`），默认为 `https://api.openai.com/v1`
-- **Google**：直连 Gemini API；此处配置优先于 `GOOGLE_API_KEY` + AI Gateway 环境变量
-- 点击 **Fetch models** 自动从上游拉取模型列表，勾选需要启用的模型；不勾选任何模型时自动启用上游返回的全部聊天模型
-- 也可以手动添加模型 ID；更改后点击 **Save** 保存，数秒内（KV 最终一致性）生效
+- 点击左下角 **添加服务商**，填写名称并选择接入风格：
+  - **OpenAI 风格**：OpenAI 官方及任意 OpenAI 兼容端点（New API、AiHubMix、DeepSeek 等），默认地址 `https://api.openai.com/v1`
+  - **Gemini 风格**：Google Gemini API 兼容端点，默认地址 `https://generativelanguage.googleapis.com/v1beta`
+- 详情页可编辑名称、启用 / 停用开关、API 密钥（支持显示 / 隐藏与**检测**连通性）和 API 地址（留空使用默认端点）
+- 点击 **同步模型** 从上游拉取模型列表（模型按系列分组展示），也可以用 **+** 手动添加模型 ID；模型列表为空时自动启用上游返回的全部聊天模型
+- 所有更改即时保存，数秒内（KV 最终一致性）生效；旧版固定的 OpenAI / Google 配置会在首次打开时自动迁移为服务商
 
 > 注意：此处填写的 API Key 是部署站点调用上游服务所用的密钥，与登录本站的密钥（`OPENAI_API_KEY`、`APP_PASSWORD`、/admin 创建的 Key）无关。
 
@@ -97,6 +99,20 @@ curl https://your-domain.com/v1/chat/completions \
 wrangler kv namespace create API_KEYS
 # 将输出的 id 填入 wrangler.jsonc 的 kv_namespaces
 ```
+
+### Conversation History（D1 对话历史）
+
+文本对话（会话与消息）存储在 Cloudflare D1，所有持访问密码的设备共享同一份历史；`/image` 图片生成历史仍仅保存在浏览器 IndexedDB 中。首次部署前创建数据库并执行迁移（仓库的 `wrangler.jsonc` 已包含 `DB` 绑定，`migrations/` 已包含建表 SQL）：
+
+```bash
+wrangler d1 create cloudflare-ai-web
+# 将输出的 database_id 填入 wrangler.jsonc 的 d1_databases
+
+wrangler d1 migrations apply cloudflare-ai-web --local   # 本地开发库
+wrangler d1 migrations apply cloudflare-ai-web --remote  # 线上库（部署前执行）
+```
+
+> D1 绑定是对话功能的必需项。未配置绑定时（如 Vercel / Docker 部署）对话接口返回 503，网页端会提示错误且不会把数据写入本机，历史对话不可用。旧版本保存在浏览器 IndexedDB 中的文本对话不会迁移；升级后 Dexie 自动升级至 v4 并移除本地 session 表，图片历史不受影响。
 
 ## 部署说明
 

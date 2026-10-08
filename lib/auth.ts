@@ -49,11 +49,7 @@ const importKey = async (secret: string): Promise<CryptoKey> => {
   );
 };
 
-const createProof = async (
-  key: CryptoKey,
-  expiry: number,
-  cookieName: string,
-): Promise<string> => {
+const createProof = async (key: CryptoKey, expiry: number, cookieName: string): Promise<string> => {
   const data = encoder.encode(`${expiry}:${cookieName}`);
   const signature = await crypto.subtle.sign("HMAC", key, data);
   return base64urlEncode(signature);
@@ -259,7 +255,5 @@ export const authorizeOpenAiRequest = async (
   }
 
   // Public deployment, but only when no dynamic key store is configured.
-  return record === undefined
-    ? { ok: true }
-    : { ok: false, response: unauthorizedResponse() };
+  return record === undefined ? { ok: true } : { ok: false, response: unauthorizedResponse() };
 };

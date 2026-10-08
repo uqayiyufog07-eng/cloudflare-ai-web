@@ -1,5 +1,6 @@
 export type ModelType = "Text Generation" | "Text to Image";
-export type ModelProvider = "workers-ai" | "google" | "openai";
+/** "workers-ai" for the built-in Cloudflare catalog, otherwise a custom provider id. */
+export type ModelProvider = string;
 export type ModelSource = "cloudflare" | "external";
 export type ModelInput = "image" | "search";
 
@@ -9,6 +10,8 @@ export interface Model {
   brand: string;
   type: ModelType;
   provider: ModelProvider;
+  /** Display name of the admin-configured provider serving external models. */
+  providerName?: string;
   source: ModelSource;
   input?: ModelInput[];
   reasoning?: boolean;
@@ -59,8 +62,12 @@ export const getModelBrand = (id: string) => {
   );
 };
 
-export const getModelGroup = (model: Model) =>
-  model.source === "external" ? "External" : model.brand;
+export const getModelGroup = (model: Model) => {
+  if (model.source !== "external") {
+    return model.brand;
+  }
+  return model.providerName ?? "External";
+};
 
 /**
  * External models can be served by any OpenAI-compatible endpoint, so the

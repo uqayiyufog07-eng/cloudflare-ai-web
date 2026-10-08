@@ -94,8 +94,16 @@ describe("with a KV namespace", () => {
   });
 
   test("listApiKeys returns entries newest first", async () => {
-    const older: ApiKeyRecord = { name: "older", createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null };
-    const newer: ApiKeyRecord = { name: "newer", createdAt: "2027-01-01T00:00:00Z", lastUsedAt: "2027-01-02T00:00:00Z" };
+    const older: ApiKeyRecord = {
+      name: "older",
+      createdAt: "2026-01-01T00:00:00Z",
+      lastUsedAt: null,
+    };
+    const newer: ApiKeyRecord = {
+      name: "newer",
+      createdAt: "2027-01-01T00:00:00Z",
+      lastUsedAt: "2027-01-02T00:00:00Z",
+    };
     await fakeKv.put("key:sk-cfw-older", JSON.stringify(older), { metadata: older });
     await fakeKv.put("key:sk-cfw-newer", JSON.stringify(newer), { metadata: newer });
 
@@ -146,7 +154,11 @@ describe("without a KV namespace", () => {
   });
 
   test("touchApiKey does nothing", async () => {
-    await touchApiKey("sk-cfw-any", { name: "k", createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null });
+    await touchApiKey("sk-cfw-any", {
+      name: "k",
+      createdAt: "2026-01-01T00:00:00Z",
+      lastUsedAt: null,
+    });
     expect(waitUntilCalls.length).toBe(0);
   });
 });
@@ -158,7 +170,11 @@ test("without a Cloudflare context all operations degrade gracefully", async () 
   try {
     expect(await findApiKeyByToken("sk-cfw-any")).toBeUndefined();
     expect(await listApiKeys()).toBeUndefined();
-    await touchApiKey("sk-cfw-any", { name: "k", createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null });
+    await touchApiKey("sk-cfw-any", {
+      name: "k",
+      createdAt: "2026-01-01T00:00:00Z",
+      lastUsedAt: null,
+    });
   } finally {
     contextRef.env = savedEnv;
   }

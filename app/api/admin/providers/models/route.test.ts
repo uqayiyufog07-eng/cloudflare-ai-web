@@ -81,7 +81,6 @@ beforeEach(async () => {
 afterEach(() => {
   delete process.env.ADMIN_PASSWORD;
   globalThis.fetch = originalFetch;
-  // Neutralize the mocked context so later test files degrade gracefully.
   contextRef.env = null;
 });
 
@@ -91,26 +90,31 @@ describe("POST /api/admin/providers/models", () => {
       new Request("https://example.com/api/admin/providers/models", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider: "openai" }),
+        body: JSON.stringify({ style: "openai", apiKey: "sk-x" }),
       }),
     );
     expect(response.status).toBe(401);
     expect(fetchCalls).toHaveLength(0);
   });
 
-  test("returns 400 when no API key is available", async () => {
-    const response = await POST(adminRequest({ provider: "openai" }));
+  test("returns 400 when neither an id nor a style with key is provided", async () => {
+    const response = await POST(adminRequest({}));
     expect(response.status).toBe(400);
   });
 
-  test("probes an OpenAI-compatible endpoint with the submitted key", async () => {
+  test("returns 400 when no API key is available", async () => {
+    const response = await POST(adminRequest({ style: "openai" }));
+    expect(response.status).toBe(400);
+  });
+
+  test("probes an OpenAI-style endpoint with the submitted key", async () => {
     fetchResponse = () =>
       new Response(JSON.stringify({ data: [{ id: "gpt-5.2" }, { id: "text-embedding-3" }] }), {
         status: 200,
       });
 
     const response = await POST(
-      adminRequest({ provider: "openai", apiKey: "sk-x", baseUrl: "https://aihubmix.com/v1" }),
+      adminRequest({ style: "openai", apiKey: "sk-x", baseUrl: "https://aihubmix.com/v1" }),
     );
 
     expect(response.status).toBe(200);
@@ -119,20 +123,33 @@ describe("POST /api/admin/providers/models", () => {
     expect(fetchCalls[0].headers.authorization).toBe("Bearer sk-x");
   });
 
-  test("uses stored settings when the body only names the provider", async () => {
+  test("probes a stored provider using its style and credentials", async () => {
     await fakeKv.put(
-      "settings:google",
-      JSON.stringify({ apiKey: "goog-key", baseUrl: "https://gemini.example.com/v1beta" }),
+      "settings:provider:gem",
+      JSON.stringify({
+        id: "gem",
+        name: "Gem",
+        style: "gemini",
+        enabled: true,
+        apiKey: "goog-key",
+        baseUrl: "https://gemini.example.com/v1beta",
+        createdAt: "2026-10-07T00:00:00.000Z",
+      }),
     );
     fetchResponse = () =>
       new Response(
         JSON.stringify({
-          models: [{ name: "models/gemini-3.6-flash", supportedGenerationMethods: ["generateContent"] }],
+          models: [
+            {
+              name: "models/gemini-3.6-flash",
+              supportedGenerationMethods: ["generateContent"],
+            },
+          ],
         }),
         { status: 200 },
       );
 
-    const response = await POST(adminRequest({ provider: "google" }));
+    const response = await POST(adminRequest({ id: "gem" }));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ models: ["gemini-3.6-flash"] });
@@ -140,10 +157,36 @@ describe("POST /api/admin/providers/models", () => {
     expect(fetchCalls[0].headers["x-goog-api-key"]).toBe("goog-key");
   });
 
+  test("lets a submitted key override the stored one", async () => {
+    await fakeKv.put(
+      "settings:provider:relay",
+      JSON.stringify({
+        id: "relay",
+        name: "Relay",
+        style: "openai",
+        enabled: true,
+        apiKey: "sk-stored",
+        createdAt: "2026-10-07T00:00:00.000Z",
+      }),
+    );
+    fetchResponse = () =>
+      new Response(JSON.stringify({ data: [{ id: "gpt-x" }] }), { status: 200 });
+
+    const response = await POST(adminRequest({ id: "relay", apiKey: "sk-draft" }));
+
+    expect(response.status).toBe(200);
+    expect(fetchCalls[0].headers.authorization).toBe("Bearer sk-draft");
+  });
+
+  test("returns 404 for an unknown provider id", async () => {
+    const response = await POST(adminRequest({ id: "ghost" }));
+    expect(response.status).toBe(404);
+  });
+
   test("returns 502 when the upstream endpoint fails", async () => {
     fetchResponse = () => new Response("Internal Server Error", { status: 500 });
 
-    const response = await POST(adminRequest({ provider: "openai", apiKey: "sk-x" }));
+    const response = await POST(adminRequest({ style: "openai", apiKey: "sk-x" }));
 
     expect(response.status).toBe(502);
     expect(fetchCalls[0].url).toBe("https://api.openai.com/v1/models");

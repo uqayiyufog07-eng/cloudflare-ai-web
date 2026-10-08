@@ -30,7 +30,7 @@ docker run -d --name cloudflare-ai-web \
 - Quickly build a multimodel AI platform using Cloudflare Workers AI
 - Support Cloudflare AI Gateway to access models such as Gemini
 - Support fast deployment with Serverless
-- Chat history is stored locally
+- Text conversation history is stored in Cloudflare D1 and shared across devices signed in with the same access password; image generation history stays local in the browser
 - Image attachments are resized in the browser (long edge up to 1568px, at most 512 KiB each, up to 5 per request) so requests fit the Vercel Functions body limit
 - Access Session protection via deployment password
 - Standard OpenAI-format APIs (`/v1/models`, `/v1/chat/completions`) that any OpenAI client can consume
@@ -41,10 +41,10 @@ docker run -d --name cloudflare-ai-web \
 
 The application exposes the following OpenAI-compatible endpoints. Model names match the `id` values returned by `GET /v1/models`:
 
-| Endpoint                 | Description                                              |
-| ------------------------ | -------------------------------------------------------- |
-| `GET /v1/models`         | List available text generation models                    |
-| `GET /v1/models/{id}`    | Retrieve a single model                                  |
+| Endpoint                    | Description                                            |
+| --------------------------- | ------------------------------------------------------ |
+| `GET /v1/models`            | List available text generation models                  |
+| `GET /v1/models/{id}`       | Retrieve a single model                                |
 | `POST /v1/chat/completions` | Chat completions with `stream` support and image input |
 
 Authentication uses `Authorization: Bearer <API Key>`. API keys are matched in the following priority order:
@@ -70,7 +70,7 @@ curl https://your-domain.com/v1/chat/completions \
 
 ## Admin Console (/admin)
 
-The `/admin` page has two sections in its left navigation. The login password is taken from `ADMIN_PASSWORD`, falling back to `APP_PASSWORD`; when neither is set the page shows an "unconfigured" state.
+The `/admin` page has a left navigation with "Settings - Model Providers", "API Gateway - API Keys", and "About". The login password is taken from `ADMIN_PASSWORD`, falling back to `APP_PASSWORD`; when neither is set the page shows an "unconfigured" state.
 
 ### API Keys
 
@@ -80,14 +80,16 @@ Dynamically manage keys for the OpenAI-format APIs (create / list / delete, form
 - Deleted keys stop working immediately (with a few seconds of propagation delay)
 - The list shows each key's name, creation time, and last-used time (updated at most once per minute)
 
-### Providers
+### Model Providers
 
-Configure upstream chat providers without redeploying. Saved models appear in the web model catalog and `/v1/models` right away:
+A three-pane console for upstream model platforms. **No providers are preset** — every provider is added by you, and its models appear in the web catalog and `/v1/models` right away:
 
-- **OpenAI**: any OpenAI-compatible endpoint; change the API address to use a relay such as `https://aihubmix.com/v1` (default `https://api.openai.com/v1`)
-- **Google**: direct Gemini API access; settings stored here take precedence over the `GOOGLE_API_KEY` + AI Gateway environment variables
-- Click **Fetch models** to pull the model list from the upstream endpoint, then pick the models to enable; leaving nothing selected enables every chat model the endpoint returns
-- Model ids can also be added manually; click **Save** to store changes, which propagate within a few seconds (KV eventual consistency)
+- Click **Add provider** at the bottom of the list, give it a name and pick an integration style:
+  - **OpenAI style**: OpenAI itself and any OpenAI-compatible endpoint (New API, AiHubMix, DeepSeek, ...), default address `https://api.openai.com/v1`
+  - **Gemini style**: Google Gemini API compatible endpoints, default address `https://generativelanguage.googleapis.com/v1beta`
+- The detail pane edits the name, the enable toggle, the API key (show/hide and a **Test** button) and the API address (leave empty for the default endpoint)
+- Click **Sync models** to pull the upstream model list (grouped by model family), or use **+** to add model ids manually; an empty model list automatically serves every chat model the endpoint returns
+- Every change is saved immediately and propagates within a few seconds (KV eventual consistency); legacy fixed OpenAI/Google settings are migrated into providers automatically on first open
 
 > Note: the API keys entered here are the credentials this deployment uses to call the upstream services. They are unrelated to the keys that log into this site (`OPENAI_API_KEY`, `APP_PASSWORD`, and the keys created under API Keys).
 
@@ -98,21 +100,35 @@ wrangler kv namespace create API_KEYS
 # Fill the returned id into kv_namespaces in wrangler.jsonc
 ```
 
+### Conversation History (D1)
+
+Text conversations (sessions and messages) are stored in Cloudflare D1 and shared by every device that holds the access password. The `/image` generation history still lives only in browser IndexedDB. Create the database and apply migrations before the first deploy (`wrangler.jsonc` already ships the `DB` binding, and `migrations/` contains the schema SQL):
+
+```bash
+wrangler d1 create cloudflare-ai-web
+# Fill the returned database_id into d1_databases in wrangler.jsonc
+
+wrangler d1 migrations apply cloudflare-ai-web --local   # local dev database
+wrangler d1 migrations apply cloudflare-ai-web --remote  # production database (run before deploying)
+```
+
+> The D1 binding is required to start or load a conversation. When it is missing (e.g. Vercel / Docker deployments), the conversation endpoints return 503: the UI shows an error instead of writing data locally and history is unavailable. Text conversations kept in IndexedDB by older versions are not migrated; the Dexie schema auto-upgrades to v4 and drops the local session table, while Image History is untouched.
+
 ## Deployment Instructions
 
 ### Environment Variables
 
-| Name                                | Description                      | Required     |
-| ----------------------------------- | -------------------------------- | ------------ |
-| CF_ACCOUNT_ID                       | Cloudflare Account ID            | ✅           |
-| CF_WORKERS_AI_TOKEN                 | Cloudflare Workers AI Token      | ✅           |
-| CF_AI_GATEWAY_NAME                  | Cloudflare AI Gateway Name       |              |
-| CF_AI_GATEWAY_TOKEN                 | Cloudflare AI Gateway Auth Token | With gateway |
-| GOOGLE_API_KEY                      | Google AI Studio Token           | With Google  |
-| NEXT_PUBLIC_CF_AI_GATEWAY_PROVIDERS | Cloudflare AI Gateway Providers  |              |
-| APP_PASSWORD                        | Access Password (Access Session) |              |
-| OPENAI_API_KEY                      | API key for the OpenAI-format APIs |            |
-| ADMIN_PASSWORD                      | Login password for the /admin console |        |
+| Name                                | Description                           | Required     |
+| ----------------------------------- | ------------------------------------- | ------------ |
+| CF_ACCOUNT_ID                       | Cloudflare Account ID                 | ✅           |
+| CF_WORKERS_AI_TOKEN                 | Cloudflare Workers AI Token           | ✅           |
+| CF_AI_GATEWAY_NAME                  | Cloudflare AI Gateway Name            |              |
+| CF_AI_GATEWAY_TOKEN                 | Cloudflare AI Gateway Auth Token      | With gateway |
+| GOOGLE_API_KEY                      | Google AI Studio Token                | With Google  |
+| NEXT_PUBLIC_CF_AI_GATEWAY_PROVIDERS | Cloudflare AI Gateway Providers       |              |
+| APP_PASSWORD                        | Access Password (Access Session)      |              |
+| OPENAI_API_KEY                      | API key for the OpenAI-format APIs    |              |
+| ADMIN_PASSWORD                      | Login password for the /admin console |              |
 
 #### CF_WORKERS_AI_TOKEN
 

@@ -97,7 +97,10 @@ describe("POST /api/admin/keys", () => {
     const response = await createKey(
       adminRequest("/api/admin/keys", {
         method: "POST",
-        headers: { "content-type": "application/json", cookie: `${getAdminCookieName()}=${adminCookie}` },
+        headers: {
+          "content-type": "application/json",
+          cookie: `${getAdminCookieName()}=${adminCookie}`,
+        },
         body: JSON.stringify({ name: "integration tests" }),
       }),
     );
@@ -112,7 +115,10 @@ describe("POST /api/admin/keys", () => {
     const response = await createKey(
       adminRequest("/api/admin/keys", {
         method: "POST",
-        headers: { "content-type": "application/json", cookie: `${getAdminCookieName()}=${adminCookie}` },
+        headers: {
+          "content-type": "application/json",
+          cookie: `${getAdminCookieName()}=${adminCookie}`,
+        },
         body: JSON.stringify({ name: "" }),
       }),
     );
@@ -125,7 +131,10 @@ describe("POST /api/admin/keys", () => {
       const response = await createKey(
         adminRequest("/api/admin/keys", {
           method: "POST",
-          headers: { "content-type": "application/json", cookie: `${getAdminCookieName()}=${adminCookie}` },
+          headers: {
+            "content-type": "application/json",
+            cookie: `${getAdminCookieName()}=${adminCookie}`,
+          },
           body: JSON.stringify({ name: "x" }),
         }),
       );
@@ -141,7 +150,10 @@ describe("DELETE /api/admin/keys/[id]", () => {
     const created = await createKey(
       adminRequest("/api/admin/keys", {
         method: "POST",
-        headers: { "content-type": "application/json", cookie: `${getAdminCookieName()}=${adminCookie}` },
+        headers: {
+          "content-type": "application/json",
+          cookie: `${getAdminCookieName()}=${adminCookie}`,
+        },
         body: JSON.stringify({ name: "to delete" }),
       }),
     );

@@ -1,6 +1,6 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type FileUIPart } from "ai";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "@/components/ui/toast";
 import { useAuthRetry } from "@/hooks/use-auth-retry";
 import { useScrollToBottom } from "@/hooks/use-scroll-to-bottom";
@@ -8,7 +8,8 @@ import {
   appendConversationMessage,
   createUserMessage,
   loadConversationHistory,
-} from "@/lib/conversation-store";
+  type RemoteStoredMessage,
+} from "@/lib/conversation-api";
 import { fitImagePartsWithinLimit } from "@/lib/image-compression";
 import { buildModelContext } from "@/lib/model-context";
 import type { Model } from "@/lib/models";
@@ -26,9 +27,15 @@ const showError = (message: string) => {
   });
 };
 
+const isUnauthorized = (error: unknown) => (error as Error).message === "Unauthorized";
+
+type RetryAction = { type: "load" } | { type: "send"; text: string; files?: FileUIPart[] };
+
 /**
- * Drives one Conversation History: loads its newest messages, persists each finished
- * message, and starts the first response when the conversation was just created.
+ * Drives one Conversation History: loads its cloud messages, persists each
+ * finished message, and starts the first response when the conversation was
+ * just created. A 401 on any step opens the password dialog and replays the
+ * interrupted step once after authentication.
  */
 export const useConversation = ({
   sessionId,
@@ -41,6 +48,7 @@ export const useConversation = ({
 }) => {
   const scroll = useScrollToBottom();
   const [startsWithPendingMessage] = useState(isNew);
+  const retryActionRef = useRef<RetryAction | null>(null);
 
   const { messages, sendMessage, status, setMessages, stop, regenerate } = useChat({
     id: sessionId,
@@ -76,12 +84,19 @@ export const useConversation = ({
       }
 
       resetAuthRetry();
-      appendConversationMessage(sessionId, message).catch(() => {
+      appendConversationMessage(sessionId, message).catch((error) => {
+        if (isUnauthorized(error)) {
+          // Default replay after auth is regenerating the assistant response.
+          retryActionRef.current = null;
+          handleUnauthorized();
+          return;
+        }
         showError("Unable to save the response to chat history.");
       });
     },
     onError: (error) => {
       if (error.message === "Unauthorized") {
+        retryActionRef.current = null;
         handleUnauthorized();
         return;
       }
@@ -89,31 +104,88 @@ export const useConversation = ({
     },
   });
 
-  const { authDialog, handleUnauthorized, resetAuthRetry } = useAuthRetry(() => regenerate());
+  // Declared before the callbacks below because their dependency arrays read
+  // handleUnauthorized immediately during render. The replay closure itself
+  // references persistAndSend/retryLoad, which are only invoked later.
+  const { authDialog, handleUnauthorized, resetAuthRetry } = useAuthRetry(() => {
+    const action = retryActionRef.current;
+    if (action?.type === "send") {
+      retryActionRef.current = null;
+      void persistAndSend(action.text, action.files);
+    } else if (action?.type === "load") {
+      retryActionRef.current = null;
+      retryLoad();
+    } else {
+      void regenerate();
+    }
+  });
+
+  const applyLoadedHistory = useCallback(
+    (history: RemoteStoredMessage[]) => {
+      setMessages(history);
+      if (startsWithPendingMessage && history.at(-1)?.role === "user") {
+        window.history.replaceState(null, "", location.pathname);
+        void regenerate();
+      }
+    },
+    [startsWithPendingMessage, setMessages, regenerate],
+  );
+
+  const handleLoadFailure = useCallback(
+    (error: unknown) => {
+      if (isUnauthorized(error)) {
+        retryActionRef.current = { type: "load" };
+        handleUnauthorized();
+        return;
+      }
+      showError("Unable to load chat history.");
+    },
+    [handleUnauthorized],
+  );
+
+  const retryLoad = useCallback(() => {
+    void loadConversationHistory(sessionId).then(applyLoadedHistory).catch(handleLoadFailure);
+  }, [sessionId, applyLoadedHistory, handleLoadFailure]);
+
+  const persistAndSend = useCallback(
+    async (text: string, files?: FileUIPart[]) => {
+      const message = createUserMessage(text, files);
+      try {
+        await appendConversationMessage(sessionId, message);
+      } catch (error) {
+        if (isUnauthorized(error)) {
+          retryActionRef.current = { type: "send", text, files };
+          handleUnauthorized();
+          return;
+        }
+        showError("Unable to save the message to chat history.");
+        return;
+      }
+
+      scroll.scrollToBottom();
+      await sendMessage(message);
+    },
+    [sessionId, sendMessage, scroll, handleUnauthorized],
+  );
 
   useEffect(() => {
     let cancelled = false;
     loadConversationHistory(sessionId)
       .then((history) => {
-        if (cancelled) {
-          return;
-        }
-        setMessages(history);
-        if (startsWithPendingMessage && history.at(-1)?.role === "user") {
-          window.history.replaceState(null, "", location.pathname);
-          void regenerate();
+        if (!cancelled) {
+          applyLoadedHistory(history);
         }
       })
-      .catch(() => {
+      .catch((error) => {
         if (!cancelled) {
-          showError("Unable to load chat history.");
+          handleLoadFailure(error);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [sessionId, startsWithPendingMessage, setMessages, regenerate]);
+  }, [sessionId, applyLoadedHistory, handleLoadFailure]);
 
   useEffect(() => {
     if (status === "streaming") {
@@ -121,19 +193,13 @@ export const useConversation = ({
     }
   }, [status, messages, scroll.followIfNearBottom]);
 
-  const send = async (text: string, files?: FileUIPart[]) => {
-    resetAuthRetry();
-    const message = createUserMessage(text, files);
-    try {
-      await appendConversationMessage(sessionId, message);
-    } catch {
-      showError("Unable to save the message to chat history.");
-      return;
-    }
-
-    scroll.scrollToBottom();
-    await sendMessage(message);
-  };
+  const send = useCallback(
+    (text: string, files?: FileUIPart[]) => {
+      resetAuthRetry();
+      void persistAndSend(text, files);
+    },
+    [resetAuthRetry, persistAndSend],
+  );
 
   return { messages, status, send, stop, regenerate, authDialog, scroll };
 };

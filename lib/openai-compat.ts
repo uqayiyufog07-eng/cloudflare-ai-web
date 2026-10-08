@@ -12,7 +12,7 @@ import {
   MODEL_CONTEXT_MAX_IMAGES,
   MODEL_CONTEXT_MAX_MESSAGES,
 } from "@/lib/model-context";
-import { getCatalogModel } from "@/lib/model-catalog";
+import { getCatalogModel, findExternalCatalogModel } from "@/lib/model-catalog";
 import { getImageDataUrlSize, MAX_IMAGE_BYTES, readRequestBody } from "@/lib/request-limits";
 
 // ---- Request schema ----
@@ -63,11 +63,7 @@ const messageSchema = v.variant("role", [
 // for compatibility and silently ignored (e.g. tools, n, response_format).
 export const chatCompletionRequestSchema = v.object({
   model: v.pipe(v.string(), v.minLength(1)),
-  messages: v.pipe(
-    v.array(messageSchema),
-    v.minLength(1),
-    v.maxLength(MODEL_CONTEXT_MAX_MESSAGES),
-  ),
+  messages: v.pipe(v.array(messageSchema), v.minLength(1), v.maxLength(MODEL_CONTEXT_MAX_MESSAGES)),
   stream: v.optional(v.boolean(), false),
   stream_options: v.optional(
     v.object({
@@ -114,13 +110,12 @@ export const toOwnedBy = (brand: string) => brand.toLowerCase().replaceAll(" ", 
 
 /**
  * Resolves a request's model id to a catalog chat model, searching Cloudflare
- * models first, admin-configured upstream providers second, and external
- * models (e.g. Gemini via the AI Gateway) last.
+ * models first and every admin-configured custom provider second (with the
+ * legacy AI Gateway external list last).
  */
 export const resolveCatalogChatModel = async (id: string) =>
   (await getCatalogModel(id, "Text Generation", "workers-ai")) ??
-  (await getCatalogModel(id, "Text Generation", "openai")) ??
-  (await getCatalogModel(id, "Text Generation", "google"));
+  (await findExternalCatalogModel(id, "Text Generation"));
 
 // ---- Message conversion ----
 
@@ -261,11 +256,13 @@ export const parseChatCompletionRequest = async (
 
 export const createCompletionId = () => `chatcmpl-${crypto.randomUUID()}`;
 
-export type OpenAiUsageInput = {
-  inputTokens?: number | undefined;
-  outputTokens?: number | undefined;
-  totalTokens?: number | undefined;
-} | undefined;
+export type OpenAiUsageInput =
+  | {
+      inputTokens?: number | undefined;
+      outputTokens?: number | undefined;
+      totalTokens?: number | undefined;
+    }
+  | undefined;
 
 export const toOpenAiUsage = (usage: OpenAiUsageInput) => {
   const promptTokens = usage?.inputTokens ?? 0;
@@ -306,8 +303,7 @@ export interface ChatCompletionChunk {
 }
 
 /** Builds the SSE frame for one chat.completion.chunk payload. */
-export const toSseFrame = (chunk: ChatCompletionChunk) =>
-  `data: ${JSON.stringify(chunk)}\n\n`;
+export const toSseFrame = (chunk: ChatCompletionChunk) => `data: ${JSON.stringify(chunk)}\n\n`;
 
 export const buildChunk = (
   base: { id: string; created: number; model: string },

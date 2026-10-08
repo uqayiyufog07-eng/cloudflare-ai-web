@@ -15,7 +15,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const model = catalog.find((entry) => entry.id === id && entry.type === "Text Generation");
 
   if (!model) {
-    return openAiError(404, `The model '${id}' does not exist.`, "invalid_request_error", "model_not_found");
+    return openAiError(
+      404,
+      `The model '${id}' does not exist.`,
+      "invalid_request_error",
+      "model_not_found",
+    );
   }
 
   return Response.json({

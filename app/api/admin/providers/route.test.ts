@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GET, PUT } from "@/app/api/admin/providers/route";
+import { GET, POST } from "@/app/api/admin/providers/route";
 import { createSessionToken, getAdminCookieName } from "@/lib/auth";
 
 const ADMIN_PASSWORD = "admin-secret";
@@ -46,14 +46,16 @@ mock.module("@opennextjs/cloudflare", () => ({
   },
 }));
 
+const providersUrl = "https://example.com/api/admin/providers";
+
 const adminRequest = (init?: RequestInit) =>
-  new Request("https://example.com/api/admin/providers", {
+  new Request(providersUrl, {
     headers: { cookie: `${getAdminCookieName()}=${adminCookie}` },
     ...init,
   });
 
-const jsonInit = (method: "PUT", body: unknown): RequestInit => ({
-  method,
+const postInit = (body: unknown): RequestInit => ({
+  method: "POST",
   headers: {
     "content-type": "application/json",
     cookie: `${getAdminCookieName()}=${adminCookie}`,
@@ -77,7 +79,7 @@ afterEach(() => {
 
 describe("GET /api/admin/providers", () => {
   test("returns 401 without an admin cookie", async () => {
-    const response = await GET(new Request("https://example.com/api/admin/providers"));
+    const response = await GET(new Request(providersUrl));
     expect(response.status).toBe(401);
   });
 
@@ -91,80 +93,74 @@ describe("GET /api/admin/providers", () => {
     }
   });
 
-  test("returns empty providers when nothing is configured", async () => {
+  test("returns an empty list when nothing is configured", async () => {
     const response = await GET(adminRequest());
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ providers: {} });
+    expect(await response.json()).toEqual({ providers: [] });
   });
 });
 
-describe("PUT /api/admin/providers", () => {
-  test("saves settings with trimmed values and deduped models", async () => {
-    const response = await PUT(
+describe("POST /api/admin/providers", () => {
+  test("creates a provider with a generated id and normalized values", async () => {
+    const response = await POST(
       adminRequest(
-        jsonInit("PUT", {
-          openai: {
-            apiKey: " sk-upstream ",
-            baseUrl: " https://aihubmix.com/v1 ",
-            models: [" gpt-5.2 ", "gpt-5.2", "claude-x"],
-          },
+        postInit({
+          name: " My Relay ",
+          style: "openai",
+          baseUrl: " https://aihubmix.com/v1 ",
         }),
       ),
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      providers: {
-        openai: {
-          apiKey: "sk-upstream",
-          baseUrl: "https://aihubmix.com/v1",
-          models: ["gpt-5.2", "claude-x"],
-        },
-      },
-    });
-
-    const stored = await fakeKv.get("settings:openai");
-    expect(JSON.parse(stored as string)).toEqual({
-      apiKey: "sk-upstream",
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      provider: { id: string; name: string; style: string; enabled: boolean; baseUrl: string };
+    };
+    expect(body.provider).toMatchObject({
+      id: "my-relay",
+      name: "My Relay",
+      style: "openai",
+      enabled: true,
       baseUrl: "https://aihubmix.com/v1",
-      models: ["gpt-5.2", "claude-x"],
     });
+
+    const stored = await fakeKv.get("settings:provider:my-relay");
+    expect(stored).not.toBeNull();
   });
 
-  test("clears a provider when null is sent", async () => {
-    await fakeKv.put("settings:google", JSON.stringify({ apiKey: "goog" }));
-
-    const response = await PUT(adminRequest(jsonInit("PUT", { google: null })));
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ providers: {} });
-    expect(await fakeKv.get("settings:google")).toBeNull();
+  test("creates a gemini-style provider", async () => {
+    const response = await POST(adminRequest(postInit({ name: "Gemini", style: "gemini" })));
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { provider: { id: string; style: string } };
+    expect(body.provider).toMatchObject({ id: "gemini", style: "gemini" });
   });
 
-  test("rejects a missing API key with 400", async () => {
-    const response = await PUT(adminRequest(jsonInit("PUT", { openai: { baseUrl: "https://api.openai.com/v1" } })));
+  test("rejects duplicate names with 409", async () => {
+    const first = await POST(adminRequest(postInit({ name: "Relay", style: "openai" })));
+    expect(first.status).toBe(201);
+
+    const second = await POST(adminRequest(postInit({ name: "relay ", style: "gemini" })));
+    expect(second.status).toBe(409);
+  });
+
+  test("rejects an invalid style with 400", async () => {
+    const response = await POST(adminRequest(postInit({ name: "x", style: "webdav" })));
     expect(response.status).toBe(400);
   });
 
   test("rejects a non-http base URL with 400", async () => {
-    const response = await PUT(
-      adminRequest(jsonInit("PUT", { openai: { apiKey: "sk-x", baseUrl: "ftp://example.com/v1" } })),
-    );
-    expect(response.status).toBe(400);
-  });
-
-  test("rejects empty model ids with 400", async () => {
-    const response = await PUT(
-      adminRequest(jsonInit("PUT", { openai: { apiKey: "sk-x", models: ["valid", ""] } })),
+    const response = await POST(
+      adminRequest(postInit({ name: "x", style: "openai", baseUrl: "ftp://example.com/v1" })),
     );
     expect(response.status).toBe(400);
   });
 
   test("returns 401 without an admin cookie", async () => {
-    const response = await PUT(
-      new Request("https://example.com/api/admin/providers", {
-        method: "PUT",
+    const response = await POST(
+      new Request(providersUrl, {
+        method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ openai: { apiKey: "sk-x" } }),
+        body: JSON.stringify({ name: "x", style: "openai" }),
       }),
     );
     expect(response.status).toBe(401);
@@ -173,7 +169,7 @@ describe("PUT /api/admin/providers", () => {
   test("returns 503 when no KV store is configured", async () => {
     contextRef.env = {};
     try {
-      const response = await PUT(adminRequest(jsonInit("PUT", { openai: { apiKey: "sk-x" } })));
+      const response = await POST(adminRequest(postInit({ name: "x", style: "openai" })));
       expect(response.status).toBe(503);
     } finally {
       contextRef.env = { API_KEYS: fakeKv };
