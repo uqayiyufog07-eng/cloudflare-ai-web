@@ -44,15 +44,22 @@ const LEGACY_KEYS: Array<{ id: string; style: ProviderStyle; name: string }> = [
 export const PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/i;
 export const RESERVED_PROVIDER_IDS = ["workers-ai"];
 
+/**
+ * Maximum number of model ids persisted per provider. Aggregator gateways
+ * (AIHubMix, OpenRouter-style relays) can expose hundreds of chat models, so
+ * this must stay well above a typical /models response. 1000 ids x ~130 chars
+ * stays around 150 KiB, far below the 25 MiB KV value limit.
+ */
+export const MAX_PROVIDER_MODELS = 1000;
+/** Longest upstream model id accepted when saving or syncing a provider. */
+export const MAX_MODEL_ID_LENGTH = 200;
+
 /** Minimal structural type for the Workers KV namespace binding. */
 interface KvNamespace {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { metadata?: unknown }): Promise<void>;
   delete(key: string): Promise<void>;
-  list(options?: {
-    prefix?: string;
-    cursor?: string;
-  }): Promise<{
+  list(options?: { prefix?: string; cursor?: string }): Promise<{
     keys: Array<{ name: string; metadata?: unknown }>;
     list_complete: boolean;
     cursor?: string;
@@ -222,8 +229,8 @@ export const listCustomProviders = async (): Promise<CustomProvider[] | undefine
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
 
-  return providers.sort((a, b) =>
-    (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.name.localeCompare(b.name),
+  return providers.sort(
+    (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.name.localeCompare(b.name),
   );
 };
 
@@ -231,9 +238,7 @@ export const listCustomProviders = async (): Promise<CustomProvider[] | undefine
  * Reads one stored provider. Returns null when missing and undefined when no
  * KV store is configured.
  */
-export const getCustomProvider = async (
-  id: string,
-): Promise<CustomProvider | null | undefined> => {
+export const getCustomProvider = async (id: string): Promise<CustomProvider | null | undefined> => {
   const namespace = await getNamespace();
   if (!namespace) {
     return undefined;

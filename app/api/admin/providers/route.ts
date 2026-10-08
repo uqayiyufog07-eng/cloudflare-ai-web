@@ -3,6 +3,8 @@ import { requireAdmin } from "@/lib/auth";
 import {
   generateProviderId,
   listCustomProviders,
+  MAX_MODEL_ID_LENGTH,
+  MAX_PROVIDER_MODELS,
   PROVIDER_ID_PATTERN,
   RESERVED_PROVIDER_IDS,
   saveCustomProvider,
@@ -13,9 +15,11 @@ import { parseJsonRequest } from "@/lib/request-limits";
 
 export const dynamic = "force-dynamic";
 
-// Model ids dominate the payload: 200 ids x 128 chars can reach ~26 KiB.
-const MAX_BODY_BYTES = 65536;
-const MAX_MODELS = 200;
+// Model ids dominate the payload: 1000 ids x 200 chars can reach ~210 KiB.
+const MAX_BODY_BYTES = 262144;
+const INVALID_PROVIDER_MESSAGE =
+  "Invalid provider data: name is required (up to 64 chars), baseUrl must be an http(s) URL, " +
+  "and models must be a list of at most 1000 ids (200 chars each).";
 
 const httpUrl = v.pipe(
   v.string(),
@@ -40,8 +44,8 @@ const createProviderSchema = v.object({
   enabled: v.optional(v.boolean()),
   models: v.optional(
     v.pipe(
-      v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(128))),
-      v.maxLength(MAX_MODELS),
+      v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(MAX_MODEL_ID_LENGTH))),
+      v.maxLength(MAX_PROVIDER_MODELS),
     ),
   ),
 });
@@ -79,7 +83,12 @@ export async function POST(request: Request) {
     return denied;
   }
 
-  const parsed = await parseJsonRequest(request, createProviderSchema, MAX_BODY_BYTES);
+  const parsed = await parseJsonRequest(
+    request,
+    createProviderSchema,
+    MAX_BODY_BYTES,
+    INVALID_PROVIDER_MESSAGE,
+  );
   if (!parsed.ok) {
     return parsed.response;
   }
@@ -108,9 +117,7 @@ export async function POST(request: Request) {
     enabled: parsed.data.enabled ?? true,
     apiKey: parsed.data.apiKey ?? "",
     ...(parsed.data.baseUrl ? { baseUrl: parsed.data.baseUrl } : {}),
-    ...(normalizeModels(parsed.data.models)
-      ? { models: normalizeModels(parsed.data.models) }
-      : {}),
+    ...(normalizeModels(parsed.data.models) ? { models: normalizeModels(parsed.data.models) } : {}),
     createdAt: new Date().toISOString(),
   };
 

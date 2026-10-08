@@ -148,6 +148,13 @@ describe("POST /api/admin/providers", () => {
     expect(response.status).toBe(400);
   });
 
+  test("rejects more than 1000 models with 400", async () => {
+    const models = Array.from({ length: 1001 }, (_, index) => `model-${index}`);
+    const response = await POST(adminRequest(postInit({ name: "big", style: "openai", models })));
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("1000");
+  });
+
   test("rejects a non-http base URL with 400", async () => {
     const response = await POST(
       adminRequest(postInit({ name: "x", style: "openai", baseUrl: "ftp://example.com/v1" })),

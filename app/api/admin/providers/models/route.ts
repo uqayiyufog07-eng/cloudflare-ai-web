@@ -42,7 +42,12 @@ export async function POST(request: Request) {
     return denied;
   }
 
-  const parsed = await parseJsonRequest(request, probeSchema, MAX_BODY_BYTES);
+  const parsed = await parseJsonRequest(
+    request,
+    probeSchema,
+    MAX_BODY_BYTES,
+    "Invalid request: expected an optional provider id, style, apiKey and an http(s) baseUrl.",
+  );
   if (!parsed.ok) {
     return parsed.response;
   }

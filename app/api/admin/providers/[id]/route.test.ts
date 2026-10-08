@@ -126,15 +126,45 @@ describe("PATCH /api/admin/providers/[id]", () => {
   test("clears baseUrl and models with null", async () => {
     await seedProvider();
 
-    const response = await PATCH(
-      patchRequest("relay", { baseUrl: null, models: null }),
-      { params: params("relay") },
-    );
+    const response = await PATCH(patchRequest("relay", { baseUrl: null, models: null }), {
+      params: params("relay"),
+    });
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { provider: CustomProvider };
     expect(body.provider.baseUrl).toBeUndefined();
     expect(body.provider.models).toBeUndefined();
+  });
+
+  test("accepts a synced list of up to 1000 models", async () => {
+    await seedProvider();
+
+    const models = Array.from({ length: 1000 }, (_, index) => `model-${index}`);
+    const response = await PATCH(patchRequest("relay", { models }), {
+      params: params("relay"),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { provider: CustomProvider };
+    expect(body.provider.models).toHaveLength(1000);
+    expect(body.provider.models?.[999]).toBe("model-999");
+  });
+
+  test("rejects more than 1000 models with a descriptive 400", async () => {
+    await seedProvider();
+
+    const models = Array.from({ length: 1001 }, (_, index) => `model-${index}`);
+    const response = await PATCH(patchRequest("relay", { models }), {
+      params: params("relay"),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("1000");
+    // The oversized list must not have been persisted.
+    const stored = JSON.parse(
+      (await fakeKv.get("settings:provider:relay")) ?? "{}",
+    ) as CustomProvider;
+    expect(stored.models).toBeUndefined();
   });
 
   test("returns 404 for an unknown provider", async () => {

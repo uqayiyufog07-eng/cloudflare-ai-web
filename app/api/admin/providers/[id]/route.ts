@@ -4,6 +4,8 @@ import {
   deleteCustomProvider,
   getCustomProvider,
   listCustomProviders,
+  MAX_MODEL_ID_LENGTH,
+  MAX_PROVIDER_MODELS,
   PROVIDER_ID_PATTERN,
   saveCustomProvider,
   type CustomProvider,
@@ -12,9 +14,11 @@ import { parseJsonRequest } from "@/lib/request-limits";
 
 export const dynamic = "force-dynamic";
 
-// Model ids dominate the payload: 200 ids x 128 chars can reach ~26 KiB.
-const MAX_BODY_BYTES = 65536;
-const MAX_MODELS = 200;
+// Model ids dominate the payload: 1000 ids x 200 chars can reach ~210 KiB.
+const MAX_BODY_BYTES = 262144;
+const INVALID_PROVIDER_MESSAGE =
+  "Invalid provider data: name must be 1-64 chars, baseUrl must be an http(s) URL or null, " +
+  "and models must be a list of at most 1000 ids (200 chars each) or null.";
 
 const httpUrl = v.pipe(
   v.string(),
@@ -39,8 +43,8 @@ const patchProviderSchema = v.object({
   models: v.optional(
     v.union([
       v.pipe(
-        v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(128))),
-        v.maxLength(MAX_MODELS),
+        v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(MAX_MODEL_ID_LENGTH))),
+        v.maxLength(MAX_PROVIDER_MODELS),
       ),
       v.null(),
     ]),
@@ -52,10 +56,7 @@ const notConfiguredResponse = () =>
     status: 503,
   });
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const denied = await requireAdmin(request);
   if (denied) {
     return denied;
@@ -66,7 +67,12 @@ export async function PATCH(
     return new Response("Invalid provider id.", { status: 400 });
   }
 
-  const parsed = await parseJsonRequest(request, patchProviderSchema, MAX_BODY_BYTES);
+  const parsed = await parseJsonRequest(
+    request,
+    patchProviderSchema,
+    MAX_BODY_BYTES,
+    INVALID_PROVIDER_MESSAGE,
+  );
   if (!parsed.ok) {
     return parsed.response;
   }
@@ -127,10 +133,7 @@ export async function PATCH(
   return Response.json({ provider: updated });
 }
 
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const denied = await requireAdmin(request);
   if (denied) {
     return denied;

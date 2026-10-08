@@ -12,6 +12,10 @@
 - Conversation History moves from browser-only IndexedDB to D1: the Dexie schema upgrades to v4 and drops the `session` table. Local text conversations from older versions are not migrated; Image History (`/image`, including generated blobs) stays in IndexedDB.
 - Conversation names are derived on the server from the first text part (first 20 characters).
 
+### Fixed
+
+- Syncing models for aggregator gateways (e.g. AIHubMix) failed with a generic "Invalid request data" error because the saved model list was capped at 200 ids while such endpoints expose hundreds of chat models. The cap is raised to 1000 ids (200 chars each, 256 KiB body) and the admin API now returns field-specific validation messages instead of the generic error.
+
 ### Notes
 
 - The D1 binding is required to start or load a conversation. When it is missing (e.g. Vercel/Docker images), the endpoints return 503 and the UI shows an error instead of writing data locally. Run the local and remote migrations before deploying (see README).

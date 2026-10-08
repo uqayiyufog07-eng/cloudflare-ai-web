@@ -69,6 +69,7 @@ export const parseJsonRequest = async <Schema extends v.GenericSchema>(
   request: Request,
   schema: Schema,
   maxBytes = MAX_REQUEST_BODY_BYTES,
+  invalidDataMessage = "Invalid request data",
 ): Promise<ParsedJsonRequest<v.InferOutput<Schema>>> => {
   const bodyResult = await readRequestBody(request, maxBytes);
   if (!bodyResult.ok) {
@@ -82,12 +83,12 @@ export const parseJsonRequest = async <Schema extends v.GenericSchema>(
   try {
     body = JSON.parse(bodyResult.text);
   } catch {
-    return { ok: false, response: new Response("Invalid request data", { status: 400 }) };
+    return { ok: false, response: new Response(invalidDataMessage, { status: 400 }) };
   }
 
   const parsed = v.safeParse(schema, body);
   if (!parsed.success) {
-    return { ok: false, response: new Response("Invalid request data", { status: 400 }) };
+    return { ok: false, response: new Response(invalidDataMessage, { status: 400 }) };
   }
 
   return { ok: true, data: parsed.output };
