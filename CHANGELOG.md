@@ -16,6 +16,10 @@
 
 - Syncing models for aggregator gateways (e.g. AIHubMix) failed with a generic "Invalid request data" error because the saved model list was capped at 200 ids while such endpoints expose hundreds of chat models. The cap is raised to 1000 ids (200 chars each, 256 KiB body) and the admin API now returns field-specific validation messages instead of the generic error.
 
+### Changed
+
+- "Sync models" in the admin console no longer saves every upstream model blindly: it fetches the list and opens a selection dialog with search, per-model checkboxes and select-all, so only the picked models are stored. The previous selection (including ids the upstream no longer returns) is pre-checked; confirming with nothing selected clears the list and falls back to using all upstream models.
+
 ### Notes
 
 - The D1 binding is required to start or load a conversation. When it is missing (e.g. Vercel/Docker images), the endpoints return 503 and the UI shows an error instead of writing data locally. Run the local and remote migrations before deploying (see README).
