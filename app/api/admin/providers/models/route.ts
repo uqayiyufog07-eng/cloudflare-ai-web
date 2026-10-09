@@ -1,5 +1,6 @@
 import * as v from "valibot";
 import { requireAdmin } from "@/lib/auth";
+import { probeWorkersAiCredentials } from "@/lib/model-catalog";
 import { fetchUpstreamModelIds } from "@/lib/provider-models";
 import {
   getCustomProvider,
@@ -31,7 +32,7 @@ const probeSchema = v.object({
   // Stored provider id; when omitted the probe uses style + the submitted
   // credentials (used while adding a provider before it is saved).
   id: v.optional(v.pipe(v.string(), v.minLength(1), v.maxLength(64))),
-  style: v.optional(v.picklist(["openai", "gemini"])),
+  style: v.optional(v.picklist(["openai", "gemini", "workers-ai"])),
   apiKey: v.optional(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(512))),
   baseUrl: v.optional(httpUrl),
 });
@@ -77,6 +78,33 @@ export async function POST(request: Request) {
 
   if (!style) {
     return new Response("An integration style (openai or gemini) is required.", { status: 400 });
+  }
+
+  if (style === "workers-ai") {
+    const accountId = process.env.CF_ACCOUNT_ID;
+    if (!accountId) {
+      return new Response("Missing CF_ACCOUNT_ID for this deployment.", { status: 503 });
+    }
+
+    const token = apiKey || storedApiKey || process.env.CF_WORKERS_AI_TOKEN;
+    if (!token) {
+      return new Response(
+        "A Workers AI API token is required (enter one or set the CF_WORKERS_AI_TOKEN secret).",
+        { status: 400 },
+      );
+    }
+
+    try {
+      // The Workers AI catalog is synced independently; the probe only proves
+      // the credentials work, so no model ids are returned.
+      await probeWorkersAiCredentials(accountId, token);
+      return Response.json({ models: [] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      return new Response(`Failed to validate Workers AI credentials: ${message}`, {
+        status: 502,
+      });
+    }
   }
 
   const effectiveApiKey = apiKey ?? storedApiKey;

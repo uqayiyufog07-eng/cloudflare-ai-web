@@ -2,12 +2,14 @@ import * as v from "valibot";
 import { requireAdmin } from "@/lib/auth";
 import {
   generateProviderId,
+  listAdminProviders,
   listCustomProviders,
   MAX_MODEL_ID_LENGTH,
   MAX_PROVIDER_MODELS,
   PROVIDER_ID_PATTERN,
   RESERVED_PROVIDER_IDS,
   saveCustomProvider,
+  WORKERS_AI_DEFAULT_PROVIDER,
   type CustomProvider,
   type ProviderStyle,
 } from "@/lib/provider-settings";
@@ -69,7 +71,7 @@ export async function GET(request: Request) {
     return denied;
   }
 
-  const providers = await listCustomProviders();
+  const providers = await listAdminProviders();
   if (!providers) {
     return notConfiguredResponse();
   }
@@ -91,6 +93,12 @@ export async function POST(request: Request) {
   );
   if (!parsed.ok) {
     return parsed.response;
+  }
+
+  if (
+    parsed.data.name.trim().toLowerCase() === WORKERS_AI_DEFAULT_PROVIDER.name.toLowerCase()
+  ) {
+    return new Response("A provider with this name already exists.", { status: 409 });
   }
 
   const existing = await listCustomProviders();

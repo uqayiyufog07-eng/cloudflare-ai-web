@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   let runRequest: ReturnType<typeof createImageRunRequest>;
   try {
     runRequest = createImageRunRequest({
-      ...getCloudflareCredentials(),
+      ...(await getCloudflareCredentials()),
       gateway: getCloudflareGatewayCredentials(),
       model,
       prompt,

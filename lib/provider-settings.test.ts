@@ -3,8 +3,10 @@ import {
   deleteCustomProvider,
   generateProviderId,
   getCustomProvider,
+  listAdminProviders,
   listCustomProviders,
   saveCustomProvider,
+  WORKERS_AI_DEFAULT_PROVIDER,
   type CustomProvider,
 } from "@/lib/provider-settings";
 
@@ -155,6 +157,44 @@ describe("with a KV namespace", () => {
     expect(await deleteCustomProvider("aimixhub")).toBe(true);
     expect(await getCustomProvider("aimixhub")).toBeNull();
     expect(await deleteCustomProvider("aimixhub")).toBe(true);
+  });
+
+  test("the built-in Workers AI provider resolves to defaults before it is saved", async () => {
+    expect(await getCustomProvider("workers-ai")).toEqual({ ...WORKERS_AI_DEFAULT_PROVIDER });
+  });
+
+  test("the built-in Workers AI provider merges stored overrides", async () => {
+    await fakeKv.put(
+      "settings:provider:workers-ai",
+      JSON.stringify({
+        id: "workers-ai",
+        name: "tampered",
+        style: "workers-ai",
+        enabled: false,
+        apiKey: "cf-token",
+        baseUrl: "https://example.com/v1",
+        models: ["@cf/x/y"],
+      }),
+    );
+
+    expect(await getCustomProvider("workers-ai")).toEqual({
+      ...WORKERS_AI_DEFAULT_PROVIDER,
+      enabled: false,
+      apiKey: "cf-token",
+    });
+  });
+
+  test("a malformed stored Workers AI entry self-heals to the defaults", async () => {
+    await fakeKv.put("settings:provider:workers-ai", "not-json");
+    expect(await getCustomProvider("workers-ai")).toEqual({ ...WORKERS_AI_DEFAULT_PROVIDER });
+  });
+
+  test("listAdminProviders puts the built-in service first, then stored providers", async () => {
+    await saveCustomProvider(makeProvider({ id: "relay", name: "Relay" }));
+
+    const providers = await listAdminProviders();
+    expect(providers?.map((provider) => provider.id)).toEqual(["workers-ai", "relay"]);
+    expect(providers?.[0]).toEqual({ ...WORKERS_AI_DEFAULT_PROVIDER });
   });
 });
 

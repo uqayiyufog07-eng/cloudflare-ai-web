@@ -6,8 +6,10 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Cloud,
   Eye,
   EyeOff,
+  ExternalLink,
   Plus,
   RefreshCw,
   Search,
@@ -53,6 +55,7 @@ type ProviderPatch = {
 const STYLE_LABEL: Record<ProviderStyle, string> = {
   openai: "OpenAI",
   gemini: "Gemini",
+  "workers-ai": "Workers AI",
 };
 
 const asModel = (provider: CustomProvider, id: string): Model => ({
@@ -226,7 +229,11 @@ export default function ProviderSettingsSection() {
           )}
           {filtered.map((provider) => {
             const active = provider.id === selectedId;
-            const healthy = provider.enabled && provider.apiKey.length > 0;
+            // The built-in Workers AI service can also be served by the
+            // CF_WORKERS_AI_TOKEN deployment secret, so a missing stored key
+            // does not make it unhealthy.
+            const healthy =
+              provider.enabled && (provider.style === "workers-ai" || provider.apiKey.length > 0);
             return (
               <li key={provider.id}>
                 <button
@@ -261,13 +268,22 @@ export default function ProviderSettingsSection() {
 
       {/* Provider detail */}
       {selected ? (
-        <ProviderDetail
-          key={selected.id}
-          provider={selected}
-          onBack={() => setSelectedId(null)}
-          onPatch={(patch) => patchProvider(selected.id, patch)}
-          onDelete={() => removeProvider(selected.id)}
-        />
+        selected.style === "workers-ai" ? (
+          <WorkersAiDetail
+            key={selected.id}
+            provider={selected}
+            onBack={() => setSelectedId(null)}
+            onPatch={(patch) => patchProvider(selected.id, patch)}
+          />
+        ) : (
+          <ProviderDetail
+            key={selected.id}
+            provider={selected}
+            onBack={() => setSelectedId(null)}
+            onPatch={(patch) => patchProvider(selected.id, patch)}
+            onDelete={() => removeProvider(selected.id)}
+          />
+        )
       ) : (
         <div className="hidden flex-1 items-center justify-center p-6 lg:flex">
           <p className="text-muted-foreground text-sm">
@@ -310,6 +326,178 @@ function Switch({
   );
 }
 
+/**
+ * Detail panel for the built-in Cloudflare Workers AI service. Its model
+ * catalog (chat + image) is synced directly from Cloudflare, so the only
+ * settings are the enable switch and the API token.
+ */
+function WorkersAiDetail({
+  provider,
+  onBack,
+  onPatch,
+}: {
+  provider: CustomProvider;
+  onBack: () => void;
+  onPatch: (patch: ProviderPatch) => Promise<CustomProvider | null>;
+}) {
+  const [apiKeyDraft, setApiKeyDraft] = useState(provider.apiKey);
+  const [showKey, setShowKey] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setApiKeyDraft(provider.apiKey);
+  }, [provider.id, provider.apiKey]);
+
+  const probe = async (): Promise<boolean> => {
+    const response = await fetch("/api/admin/providers/models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: provider.id,
+        ...(apiKeyDraft.trim() && apiKeyDraft.trim() !== provider.apiKey
+          ? { apiKey: apiKeyDraft.trim() }
+          : {}),
+      }),
+    });
+    if (!response.ok) {
+      const title =
+        response.status === 400
+          ? "缺少 Workers AI API 令牌：请在上方填写，或设置 CF_WORKERS_AI_TOKEN。"
+          : response.status === 503
+            ? "当前部署缺少 CF_ACCOUNT_ID，无法调用 Workers AI。"
+            : response.status === 502
+              ? "Cloudflare 拒绝了该令牌，请检查权限或账户后重试。"
+              : ((await response.text()) || "检测失败");
+      toast.add({ title, type: "error" });
+      return false;
+    }
+    return true;
+  };
+
+  const onTest = async () => {
+    if (busy) {
+      return;
+    }
+    setBusy(true);
+    try {
+      if (await probe()) {
+        toast.add({
+          title: "Cloudflare Workers AI 连接正常，对话与图片模型目录将自动同步。",
+          type: "success",
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveApiKey = () => {
+    const value = apiKeyDraft.trim();
+    if (value && value !== provider.apiKey) {
+      void onPatch({ apiKey: value });
+    } else {
+      setApiKeyDraft(provider.apiKey);
+    }
+  };
+
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <header className="flex items-center gap-2 border-b px-4 py-3">
+        <Button variant="ghost" size="icon" className="lg:hidden" onClick={onBack} title="返回列表">
+          <ArrowLeft aria-hidden />
+        </Button>
+        <Cloud aria-hidden className="text-muted-foreground size-4" />
+        <span className="font-semibold">{provider.name}</span>
+        <Badge variant="outline" className="text-muted-foreground">
+          Workers AI
+        </Badge>
+        <Badge variant="outline" className="text-muted-foreground">
+          内置
+        </Badge>
+        <div className="ml-auto flex items-center gap-2">
+          <Switch
+            checked={provider.enabled}
+            onChange={(value) => void onPatch({ enabled: value })}
+            label="启用 Cloudflare 免费 AI"
+          />
+        </div>
+      </header>
+
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 lg:p-6">
+        <div className="max-w-2xl space-y-2">
+          <label className="text-sm font-medium" htmlFor="api-key-workers-ai">
+            Workers AI API 令牌
+          </label>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Input
+                id="api-key-workers-ai"
+                className="pr-9 font-mono"
+                type={showKey ? "text" : "password"}
+                autoComplete="off"
+                placeholder="留空时使用部署环境变量 CF_WORKERS_AI_TOKEN"
+                value={apiKeyDraft}
+                onChange={(event) => setApiKeyDraft(event.target.value)}
+                onBlur={saveApiKey}
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey((value) => !value)}
+                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2.5 -translate-y-1/2"
+                title={showKey ? "隐藏令牌" : "显示令牌"}
+              >
+                {showKey ? (
+                  <EyeOff aria-hidden className="size-4" />
+                ) : (
+                  <Eye aria-hidden className="size-4" />
+                )}
+              </button>
+            </div>
+            <Button variant="outline" onClick={() => void onTest()} disabled={busy}>
+              {busy ? "检测中..." : "检测"}
+            </Button>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            在 Cloudflare 控制台
+            <a
+              href="https://dash.cloudflare.com/profile/api-tokens"
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary inline-flex items-center gap-0.5 underline-offset-2 hover:underline"
+            >
+              创建 API 令牌
+              <ExternalLink aria-hidden className="size-3" />
+            </a>
+            （可直接使用「Workers AI」模板，授予读取与运行权限）。令牌保存在本站 KV
+            中，无需重新部署即生效。
+          </p>
+        </div>
+
+        <div className="max-w-2xl space-y-2 rounded-lg p-4 ring-1 ring-border/60">
+          <h3 className="text-sm font-medium">关于 Cloudflare 免费 AI</h3>
+          <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
+            <li>对话与图片模型目录由 Cloudflare 官方自动同步，无需手动添加模型。</li>
+            <li>免费计划每天提供 10,000 neurons 额度（UTC 0 点重置），可调用 50+ 开源模型。</li>
+            <li>关闭上方开关后，所有 Cloudflare 模型会立即从模型选择器中隐藏。</li>
+            <li>
+              账户 ID 来自部署变量 CF_ACCOUNT_ID；令牌也可改用 secret CF_WORKERS_AI_TOKEN 配置。
+            </li>
+          </ul>
+          <a
+            href="https://developers.cloudflare.com/workers-ai/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary inline-flex items-center gap-1 text-xs underline-offset-2 hover:underline"
+          >
+            查看 官方文档
+            <ExternalLink aria-hidden className="size-3" />
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProviderDetail({
   provider,
   onBack,
@@ -341,7 +529,8 @@ function ProviderDetail({
     setBaseUrlDraft(provider.baseUrl ?? "");
   }, [provider.id, provider.name, provider.apiKey, provider.baseUrl]);
 
-  const defaultBaseUrl = DEFAULT_BASE_URLS[provider.style];
+  const defaultBaseUrl =
+    DEFAULT_BASE_URLS[provider.style === "workers-ai" ? "openai" : provider.style];
   const models = provider.models ?? [];
 
   const probe = async (): Promise<string[] | null> => {

@@ -213,6 +213,24 @@ describe("createChatModel with Workers AI", () => {
     expect(chat.model.modelId).toBe("@cf/meta/llama-3.1-8b-instruct");
   });
 
+  test("prefers the token stored for the built-in admin provider", async () => {
+    process.env.CF_ACCOUNT_ID = "account";
+    process.env.CF_WORKERS_AI_TOKEN = "env-token";
+    await fakeKv.put(
+      "settings:provider:workers-ai",
+      JSON.stringify({
+        id: "workers-ai",
+        name: "Cloudflare Workers AI",
+        style: "workers-ai",
+        enabled: true,
+        apiKey: "kv-token",
+      }),
+    );
+
+    const chat = await createChatModel(workersModel, {});
+    expect(chat.model.modelId).toBe("@cf/meta/llama-3.1-8b-instruct");
+  });
+
   test("wraps reasoning models with the extract middleware", async () => {
     process.env.CF_ACCOUNT_ID = "account";
     process.env.CF_WORKERS_AI_TOKEN = "token";

@@ -192,3 +192,87 @@ describe("POST /api/admin/providers/models", () => {
     expect(fetchCalls[0].url).toBe("https://api.openai.com/v1/models");
   });
 });
+
+describe("POST /api/admin/providers/models for the built-in Workers AI service", () => {
+  const originalAccountId = process.env.CF_ACCOUNT_ID;
+  const originalToken = process.env.CF_WORKERS_AI_TOKEN;
+
+  const withEnv = async (
+    body: unknown,
+    accountId?: string,
+    token?: string,
+  ): Promise<Response> => {
+    if (accountId === undefined) {
+      delete process.env.CF_ACCOUNT_ID;
+    } else {
+      process.env.CF_ACCOUNT_ID = accountId;
+    }
+    if (token === undefined) {
+      delete process.env.CF_WORKERS_AI_TOKEN;
+    } else {
+      process.env.CF_WORKERS_AI_TOKEN = token;
+    }
+    return POST(adminRequest(body));
+  };
+
+  test("probes the Cloudflare catalog with the submitted token", async () => {
+    fetchResponse = () => new Response(JSON.stringify({ success: true }), { status: 200 });
+
+    const response = await withEnv(
+      { style: "workers-ai", apiKey: "cf-token" },
+      "account-123",
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ models: [] });
+    expect(fetchCalls[0].url).toContain(
+      "https://api.cloudflare.com/client/v4/accounts/account-123/ai/models/search",
+    );
+    expect(fetchCalls[0].headers.authorization).toBe("Bearer cf-token");
+
+    process.env.CF_ACCOUNT_ID = originalAccountId;
+    process.env.CF_WORKERS_AI_TOKEN = originalToken;
+  });
+
+  test("falls back to the deployment token for the built-in provider id", async () => {
+    fetchResponse = () => new Response(JSON.stringify({ success: true }), { status: 200 });
+
+    const response = await withEnv({ id: "workers-ai" }, "account-123", "env-token");
+
+    expect(response.status).toBe(200);
+    expect(fetchCalls[0].headers.authorization).toBe("Bearer env-token");
+
+    process.env.CF_ACCOUNT_ID = originalAccountId;
+    process.env.CF_WORKERS_AI_TOKEN = originalToken;
+  });
+
+  test("returns 400 when no token is available", async () => {
+    const response = await withEnv({ style: "workers-ai" }, "account-123");
+    expect(response.status).toBe(400);
+    expect(fetchCalls).toHaveLength(0);
+
+    process.env.CF_ACCOUNT_ID = originalAccountId;
+    process.env.CF_WORKERS_AI_TOKEN = originalToken;
+  });
+
+  test("returns 503 when CF_ACCOUNT_ID is missing", async () => {
+    const response = await withEnv({ style: "workers-ai", apiKey: "cf-token" });
+    expect(response.status).toBe(503);
+
+    process.env.CF_ACCOUNT_ID = originalAccountId;
+    process.env.CF_WORKERS_AI_TOKEN = originalToken;
+  });
+
+  test("returns 502 when Cloudflare rejects the credentials", async () => {
+    fetchResponse = () => new Response("Unauthorized", { status: 401 });
+
+    const response = await withEnv(
+      { style: "workers-ai", apiKey: "bad-token" },
+      "account-123",
+    );
+    expect(response.status).toBe(502);
+
+    process.env.CF_ACCOUNT_ID = originalAccountId;
+    process.env.CF_WORKERS_AI_TOKEN = originalToken;
+  });
+});

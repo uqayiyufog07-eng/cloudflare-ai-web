@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import {
   deleteCustomProvider,
   getCustomProvider,
+  isBuiltinProvider,
   listCustomProviders,
   MAX_MODEL_ID_LENGTH,
   MAX_PROVIDER_MODELS,
@@ -86,6 +87,19 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 
   const data = parsed.data;
+
+  // The built-in Workers AI service has a fixed identity and an automatically
+  // synced Cloudflare catalog; only the enable switch and API token change.
+  if (
+    isBuiltinProvider(id) &&
+    (data.name !== undefined || data.baseUrl !== undefined || data.models !== undefined)
+  ) {
+    return new Response(
+      "Only the enabled flag and API key can be changed for the built-in Cloudflare Workers AI service.",
+      { status: 400 },
+    );
+  }
+
   if (data.name) {
     const all = await listCustomProviders();
     if (!all) {
@@ -142,6 +156,13 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const { id } = await params;
   if (!PROVIDER_ID_PATTERN.test(id)) {
     return new Response("Invalid provider id.", { status: 400 });
+  }
+
+  if (isBuiltinProvider(id)) {
+    return new Response(
+      "The built-in Cloudflare Workers AI service cannot be deleted. Disable it instead.",
+      { status: 400 },
+    );
   }
 
   const removed = await deleteCustomProvider(id);

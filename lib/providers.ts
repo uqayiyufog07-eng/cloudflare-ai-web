@@ -7,7 +7,7 @@ import { createWorkersAI } from "workers-ai-provider";
 import { createWorkersAIFetch } from "@/lib/workers-ai-fetch";
 import type { Model } from "@/lib/models";
 import { DEFAULT_BASE_URLS } from "@/lib/provider-models";
-import { getCustomProvider, type CustomProvider } from "@/lib/provider-settings";
+import { getCustomProvider, WORKERS_AI_PROVIDER_ID, type CustomProvider } from "@/lib/provider-settings";
 
 export class ProviderConfigurationError extends Error {
   constructor(message: string) {
@@ -24,10 +24,25 @@ const requireEnvironmentVariable = (name: string): string => {
   return value;
 };
 
-export const getCloudflareCredentials = () => ({
-  accountId: requireEnvironmentVariable("CF_ACCOUNT_ID"),
-  apiKey: requireEnvironmentVariable("CF_WORKERS_AI_TOKEN"),
-});
+/**
+ * Resolves the Cloudflare account id and Workers AI token. The token is read
+ * from the built-in Workers AI provider configured on /admin 模型服务 first;
+ * when it has no stored token it falls back to the CF_WORKERS_AI_TOKEN
+ * deployment secret/variable. Throws ProviderConfigurationError when neither
+ * source provides credentials.
+ */
+export const getCloudflareCredentials = async () => {
+  const accountId = requireEnvironmentVariable("CF_ACCOUNT_ID");
+  const configured = await getCustomProvider(WORKERS_AI_PROVIDER_ID);
+  const apiKey = configured?.apiKey || process.env.CF_WORKERS_AI_TOKEN;
+  if (!apiKey) {
+    throw new ProviderConfigurationError(
+      "Missing Cloudflare Workers AI token: set the CF_WORKERS_AI_TOKEN secret or enter a token " +
+        "for the built-in Cloudflare Workers AI service on the /admin 模型服务 page.",
+    );
+  }
+  return { accountId, apiKey };
+};
 
 export const getCloudflareGatewayCredentials = () => {
   const gatewayId = process.env.CF_AI_GATEWAY_NAME;
@@ -45,8 +60,8 @@ export type CloudflareGatewayCredentials = NonNullable<
   ReturnType<typeof getCloudflareGatewayCredentials>
 >;
 
-const getWorkersAIProvider = () => {
-  const credentials = getCloudflareCredentials();
+const getWorkersAIProvider = async () => {
+  const credentials = await getCloudflareCredentials();
   const gatewayCredentials = getCloudflareGatewayCredentials();
   if (!gatewayCredentials) {
     return createWorkersAI({ ...credentials, fetch: createWorkersAIFetch() });
@@ -124,7 +139,7 @@ export const createChatModel = async (
   options: { search?: boolean },
 ): Promise<ChatModel> => {
   if (catalogModel.provider === "workers-ai") {
-    const workerModel = getWorkersAIProvider().chat(catalogModel.id);
+    const workerModel = (await getWorkersAIProvider()).chat(catalogModel.id);
     return {
       model: catalogModel.reasoning
         ? wrapLanguageModel({

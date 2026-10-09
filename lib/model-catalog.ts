@@ -9,7 +9,12 @@ import {
   type ModelType,
 } from "@/lib/models";
 import { getUpstreamModels } from "@/lib/provider-models";
-import { getCustomProvider, listCustomProviders } from "@/lib/provider-settings";
+import { getCloudflareCredentials } from "@/lib/providers";
+import {
+  getCustomProvider,
+  listAdminProviders,
+  WORKERS_AI_PROVIDER_ID,
+} from "@/lib/provider-settings";
 
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 const CATALOG_TIMEOUT_MS = 5_000;
@@ -120,12 +125,11 @@ const toModel = (model: CloudflareModel, type: ModelType): Model => {
   };
 };
 
-const fetchTaskModels = async (task: CloudflareTask): Promise<Model[]> => {
-  const accountId = process.env.CF_ACCOUNT_ID;
-  const apiToken = process.env.CF_WORKERS_AI_TOKEN;
-  if (!accountId || !apiToken) {
-    throw new Error("Missing CF_ACCOUNT_ID or CF_WORKERS_AI_TOKEN");
-  }
+const fetchTaskModels = async (
+  task: CloudflareTask,
+  credentials: { accountId: string; apiKey: string },
+): Promise<Model[]> => {
+  const { accountId, apiKey: apiToken } = credentials;
 
   const signal = AbortSignal.timeout(CATALOG_TIMEOUT_MS);
   const models: CloudflareModel[] = [];
@@ -192,9 +196,13 @@ const fetchTaskModels = async (task: CloudflareTask): Promise<Model[]> => {
   return Array.from(uniqueModels.values(), (model) => toModel(model, type));
 };
 
-const refreshTask = (task: CloudflareTask, entry: CatalogCacheEntry) => {
+const refreshTask = (
+  task: CloudflareTask,
+  entry: CatalogCacheEntry,
+  credentials: { accountId: string; apiKey: string },
+) => {
   if (!entry.refresh) {
-    entry.refresh = fetchTaskModels(task)
+    entry.refresh = fetchTaskModels(task, credentials)
       .then((models) => {
         entry.models = models;
         entry.refreshedAt = Date.now();
@@ -208,7 +216,12 @@ const refreshTask = (task: CloudflareTask, entry: CatalogCacheEntry) => {
   return entry.refresh;
 };
 
-const getTaskModels = async (task: CloudflareTask): Promise<Model[]> => {
+const getTaskModels = async (task: CloudflareTask, enabled = true): Promise<Model[]> => {
+  // The built-in Workers AI service can be switched off on /admin 模型服务.
+  if (!enabled) {
+    return [];
+  }
+
   const entry = taskCache.get(task) ?? { refreshedAt: 0 };
   taskCache.set(task, entry);
 
@@ -216,7 +229,15 @@ const getTaskModels = async (task: CloudflareTask): Promise<Model[]> => {
     return entry.models;
   }
 
-  const refresh = refreshTask(task, entry);
+  let credentials: { accountId: string; apiKey: string };
+  try {
+    credentials = await getCloudflareCredentials();
+  } catch (error) {
+    console.warn(`Workers AI credentials are unavailable for ${task}`, error);
+    return [];
+  }
+
+  const refresh = refreshTask(task, entry, credentials);
   if (entry.models) {
     after(async () => {
       try {
@@ -237,10 +258,21 @@ const getTaskModels = async (task: CloudflareTask): Promise<Model[]> => {
 };
 
 export const getModelCatalog = async (): Promise<Model[]> => {
-  const [chatModels, imageModels, customProviders] = await Promise.all([
-    getTaskModels("Text Generation"),
-    getTaskModels("Text-to-Image"),
-    listCustomProviders(),
+  const adminProviders = await listAdminProviders();
+  // When KV is not configured the built-in service is implicitly enabled and
+  // credentials come from the deployment environment variables.
+  const workersAiProvider = adminProviders?.find(
+    (provider) => provider.id === WORKERS_AI_PROVIDER_ID,
+  );
+  const workersAiEnabled = workersAiProvider?.enabled ?? true;
+  const customProviders =
+    adminProviders?.filter(
+      (provider) => provider.style === "openai" || provider.style === "gemini",
+    ) ?? undefined;
+
+  const [chatModels, imageModels] = await Promise.all([
+    getTaskModels("Text Generation", workersAiEnabled),
+    getTaskModels("Text-to-Image", workersAiEnabled),
   ]);
 
   if (!customProviders) {
@@ -274,9 +306,12 @@ export const findExternalCatalogModel = async (
   id: string,
   type: ModelType,
 ): Promise<Model | undefined> => {
-  const providers = await listCustomProviders();
+  const providers = await listAdminProviders();
   if (providers) {
     for (const provider of providers) {
+      if (provider.style === "workers-ai") {
+        continue;
+      }
       const hit = (await getUpstreamModels(provider)).find(
         (model) => model.id === id && model.type === type,
       );
@@ -287,6 +322,40 @@ export const findExternalCatalogModel = async (
   }
 
   return getExternalModels().find((model) => model.id === id && model.type === type);
+};
+
+/**
+ * Validates Workers AI credentials against the Cloudflare model catalog with
+ * a single minimal search request. Used by the admin "检测" button. Throws on
+ * any non-success response.
+ */
+export const probeWorkersAiCredentials = async (
+  accountId: string,
+  apiKey: string,
+): Promise<void> => {
+  const url = new URL(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search`,
+  );
+  url.searchParams.set("task", "Text Generation");
+  url.searchParams.set("per_page", "1");
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Cloudflare models API returned ${response.status}`);
+  }
+
+  const parsed = v.safeParse(v.object({ success: v.literal(true) }), await response.json());
+  if (!parsed.success) {
+    throw new Error("Cloudflare models API returned an invalid response");
+  }
 };
 
 export const getCatalogModel = async (id: string, type: ModelType, provider: Model["provider"]) => {
@@ -306,7 +375,12 @@ export const getCatalogModel = async (id: string, type: ModelType, provider: Mod
     return undefined;
   }
 
+  const configured = await getCustomProvider(WORKERS_AI_PROVIDER_ID);
+  if (configured && !configured.enabled) {
+    return undefined;
+  }
+
   const task: CloudflareTask = type === "Text Generation" ? "Text Generation" : "Text-to-Image";
-  const models = await getTaskModels(task);
+  const models = await getTaskModels(task, configured?.enabled ?? true);
   return models.find((model) => model.id === id);
 };

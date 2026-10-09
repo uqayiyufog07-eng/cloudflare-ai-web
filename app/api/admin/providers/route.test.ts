@@ -93,10 +93,39 @@ describe("GET /api/admin/providers", () => {
     }
   });
 
-  test("returns an empty list when nothing is configured", async () => {
+  test("returns the built-in Cloudflare Workers AI service by default", async () => {
     const response = await GET(adminRequest());
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ providers: [] });
+    expect(await response.json()).toEqual({
+      providers: [
+        {
+          id: "workers-ai",
+          name: "Cloudflare Workers AI",
+          style: "workers-ai",
+          enabled: true,
+          apiKey: "",
+          createdAt: "",
+        },
+      ],
+    });
+  });
+
+  test("lists the built-in service before stored providers", async () => {
+    await fakeKv.put(
+      "settings:provider:relay",
+      JSON.stringify({
+        id: "relay",
+        name: "Relay",
+        style: "openai",
+        enabled: true,
+        apiKey: "sk-x",
+        createdAt: "2026-10-07T00:00:00.000Z",
+      }),
+    );
+
+    const response = await GET(adminRequest());
+    const body = (await response.json()) as { providers: Array<{ id: string }> };
+    expect(body.providers.map((provider) => provider.id)).toEqual(["workers-ai", "relay"]);
   });
 });
 
@@ -141,6 +170,13 @@ describe("POST /api/admin/providers", () => {
 
     const second = await POST(adminRequest(postInit({ name: "relay ", style: "gemini" })));
     expect(second.status).toBe(409);
+  });
+
+  test("rejects creating a provider using the built-in Workers AI name", async () => {
+    const response = await POST(
+      adminRequest(postInit({ name: " cloudflare workers ai ", style: "openai" })),
+    );
+    expect(response.status).toBe(409);
   });
 
   test("rejects an invalid style with 400", async () => {

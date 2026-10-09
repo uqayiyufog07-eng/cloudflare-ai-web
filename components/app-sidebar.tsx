@@ -1,6 +1,6 @@
 "use client";
 
-import { ImageIcon, MoreHorizontal, Plus } from "lucide-react";
+import { ImageIcon, LogIn, MoreHorizontal, Plus } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -183,6 +183,12 @@ const AppSidebar = () => {
         </SidebarContent>
         <SidebarFooter>
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton render={<Link href="/admin" prefetch={false} />}>
+                <LogIn />
+                Login
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem className="flex items-center">
               <ThemeSwitcher />
 

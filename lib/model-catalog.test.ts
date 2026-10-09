@@ -1,6 +1,41 @@
 import { expect, mock, test } from "bun:test";
 import { getModelCatalog, hasSignal } from "@/lib/model-catalog";
 
+class FakeKv {
+  store = new Map<string, string>();
+
+  async get(key: string) {
+    return this.store.get(key) ?? null;
+  }
+
+  async put(key: string, value: string) {
+    this.store.set(key, value);
+  }
+
+  async list(options?: { prefix?: string }) {
+    const prefix = options?.prefix ?? "";
+    return {
+      keys: [...this.store.keys()]
+        .filter((key) => key.startsWith(prefix))
+        .map((name) => ({ name })),
+      list_complete: true,
+    };
+  }
+}
+
+const contextRef: { env: Record<string, unknown> | null } = { env: {} };
+let fakeKv = new FakeKv();
+contextRef.env = { API_KEYS: fakeKv };
+
+mock.module("@opennextjs/cloudflare", () => ({
+  getCloudflareContext: async () => {
+    if (contextRef.env === null) {
+      throw new Error("No Cloudflare context");
+    }
+    return { env: contextRef.env, ctx: { waitUntil: () => {} }, cf: undefined };
+  },
+}));
+
 test("rejects ambiguous capability signal substrings", () => {
   const model = {
     id: "test",
@@ -21,6 +56,8 @@ test("rejects ambiguous capability signal substrings", () => {
 });
 
 test("loads catalog models with structured property values", async () => {
+  fakeKv = new FakeKv();
+  contextRef.env = { API_KEYS: fakeKv };
   const originalFetch = globalThis.fetch;
   const originalAccountId = process.env.CF_ACCOUNT_ID;
   const originalToken = process.env.CF_WORKERS_AI_TOKEN;
@@ -102,5 +139,39 @@ test("loads catalog models with structured property values", async () => {
     globalThis.fetch = originalFetch;
     process.env.CF_ACCOUNT_ID = originalAccountId;
     process.env.CF_WORKERS_AI_TOKEN = originalToken;
+  }
+});
+
+test("hides every Workers AI model when the built-in service is disabled", async () => {
+  fakeKv = new FakeKv();
+  contextRef.env = { API_KEYS: fakeKv };
+  await fakeKv.put(
+    "settings:provider:workers-ai",
+    JSON.stringify({
+      id: "workers-ai",
+      name: "Cloudflare Workers AI",
+      style: "workers-ai",
+      enabled: false,
+      apiKey: "",
+    }),
+  );
+
+  process.env.CF_ACCOUNT_ID = "test-account";
+  process.env.CF_WORKERS_AI_TOKEN = "test-token";
+  let upstreamCalled = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async () => {
+    upstreamCalled = true;
+    return Response.json({ success: true, result: [] });
+  }) as unknown as typeof fetch;
+
+  try {
+    const catalog = await getModelCatalog();
+    expect(catalog.some((model) => model.provider === "workers-ai")).toBe(false);
+    expect(upstreamCalled).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.CF_ACCOUNT_ID;
+    delete process.env.CF_WORKERS_AI_TOKEN;
   }
 });

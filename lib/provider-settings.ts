@@ -15,7 +15,7 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 /** Wire protocol used to talk to an upstream platform. */
-export type ProviderStyle = "openai" | "gemini";
+export type ProviderStyle = "openai" | "gemini" | "workers-ai";
 
 export interface CustomProvider {
   id: string;
@@ -43,6 +43,26 @@ const LEGACY_KEYS: Array<{ id: string; style: ProviderStyle; name: string }> = [
 
 export const PROVIDER_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/i;
 export const RESERVED_PROVIDER_IDS = ["workers-ai"];
+
+/**
+ * The built-in Cloudflare Workers AI service. It always exists on the admin
+ * 模型服务 page (cannot be created or deleted); only its enable switch and
+ * API token are persisted as overrides in KV. Its model catalog (chat +
+ * image) is synced directly from Cloudflare, not from an upstream /models
+ * endpoint, so it carries no baseUrl/models.
+ */
+export const WORKERS_AI_PROVIDER_ID = "workers-ai";
+export const WORKERS_AI_DEFAULT_PROVIDER: CustomProvider = {
+  id: WORKERS_AI_PROVIDER_ID,
+  name: "Cloudflare Workers AI",
+  style: "workers-ai",
+  enabled: true,
+  apiKey: "",
+  createdAt: "",
+};
+
+/** Built-in services cannot be added or removed through the admin API. */
+export const isBuiltinProvider = (id: string) => id === WORKERS_AI_PROVIDER_ID;
 
 /**
  * Maximum number of model ids persisted per provider. Aggregator gateways
@@ -100,10 +120,23 @@ const toProvider = (value: string): CustomProvider | null => {
       !PROVIDER_ID_PATTERN.test(record.id) ||
       typeof record.name !== "string" ||
       record.name.trim().length === 0 ||
-      (record.style !== "openai" && record.style !== "gemini") ||
+      (record.style !== "openai" && record.style !== "gemini" && record.style !== "workers-ai") ||
       typeof record.apiKey !== "string"
     ) {
       return null;
+    }
+
+    // The built-in Workers AI service is configured entirely through its
+    // token/enable switch; id/name are fixed and baseUrl/models do not apply.
+    if (record.style === "workers-ai") {
+      return {
+        ...WORKERS_AI_DEFAULT_PROVIDER,
+        enabled: record.enabled !== false,
+        apiKey: record.apiKey,
+        ...(typeof record.createdAt === "string" && record.createdAt
+          ? { createdAt: record.createdAt }
+          : {}),
+      };
     }
 
     return {
@@ -236,7 +269,9 @@ export const listCustomProviders = async (): Promise<CustomProvider[] | undefine
 
 /**
  * Reads one stored provider. Returns null when missing and undefined when no
- * KV store is configured.
+ * KV store is configured. The built-in Workers AI service always resolves to
+ * its default record (merged with any stored overrides), even before the
+ * admin has saved anything, so callers can enable/disable and configure it.
  */
 export const getCustomProvider = async (id: string): Promise<CustomProvider | null | undefined> => {
   const namespace = await getNamespace();
@@ -244,11 +279,44 @@ export const getCustomProvider = async (id: string): Promise<CustomProvider | nu
     return undefined;
   }
 
+  if (id === WORKERS_AI_PROVIDER_ID) {
+    const value = await namespace.get(buildKey(id));
+    if (value === null) {
+      return { ...WORKERS_AI_DEFAULT_PROVIDER };
+    }
+    const stored = toProvider(value);
+    return stored
+      ? { ...WORKERS_AI_DEFAULT_PROVIDER, ...stored }
+      : { ...WORKERS_AI_DEFAULT_PROVIDER };
+  }
+
   const value = await namespace.get(buildKey(id));
   if (value === null) {
     return null;
   }
   return toProvider(value);
+};
+
+/**
+ * Lists providers for the admin console: the built-in Workers AI service
+ * first (always present), followed by every user-stored provider. Returns
+ * undefined when no KV store is configured.
+ */
+export const listAdminProviders = async (): Promise<CustomProvider[] | undefined> => {
+  const namespace = await getNamespace();
+  if (!namespace) {
+    return undefined;
+  }
+
+  const [stored, builtin] = await Promise.all([
+    listCustomProviders(),
+    getCustomProvider(WORKERS_AI_PROVIDER_ID),
+  ]);
+
+  return [
+    (builtin as CustomProvider) ?? { ...WORKERS_AI_DEFAULT_PROVIDER },
+    ...(stored ?? []).filter((provider) => provider.id !== WORKERS_AI_PROVIDER_ID),
+  ];
 };
 
 /** Saves (upserts) a provider. Returns false when no KV store is configured. */

@@ -15,7 +15,10 @@ import type { CustomProvider, ProviderStyle } from "@/lib/provider-settings";
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 5_000;
 
-export const DEFAULT_BASE_URLS: Record<ProviderStyle, string> = {
+/** Integration styles served by a remote /models endpoint (Workers AI syncs its own catalog). */
+export type UpstreamProviderStyle = Exclude<ProviderStyle, "workers-ai">;
+
+export const DEFAULT_BASE_URLS: Record<UpstreamProviderStyle, string> = {
   openai: "https://api.openai.com/v1",
   gemini: "https://generativelanguage.googleapis.com/v1beta",
 };
@@ -54,7 +57,7 @@ const fetchJson = async (url: string, headers: Record<string, string>) => {
  * list is stored. Throws on upstream failures.
  */
 export const fetchUpstreamModelIds = async (
-  style: ProviderStyle,
+  style: UpstreamProviderStyle,
   settings: { apiKey: string; baseUrl?: string },
 ): Promise<string[]> => {
   const baseUrl = settings.baseUrl ?? DEFAULT_BASE_URLS[style];
@@ -140,6 +143,11 @@ const sourceKey = (provider: CustomProvider) =>
  */
 export const getUpstreamModels = async (provider: CustomProvider): Promise<Model[]> => {
   if (!provider.enabled) {
+    return [];
+  }
+
+  // The built-in Workers AI service syncs its catalog from Cloudflare itself.
+  if (provider.style === "workers-ai") {
     return [];
   }
 

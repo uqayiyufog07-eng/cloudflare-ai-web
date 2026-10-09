@@ -216,6 +216,58 @@ describe("PATCH /api/admin/providers/[id]", () => {
   });
 });
 
+describe("the built-in Workers AI provider", () => {
+  test("PATCH stores the enable flag and token over the defaults", async () => {
+    const response = await PATCH(
+      patchRequest("workers-ai", { enabled: false, apiKey: "cf-token" }),
+      { params: params("workers-ai") },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      provider: {
+        id: "workers-ai",
+        name: "Cloudflare Workers AI",
+        style: "workers-ai",
+        enabled: false,
+        apiKey: "cf-token",
+        createdAt: "",
+      },
+    });
+
+    // The override is persisted in KV and read back merged with the defaults.
+    const stored = JSON.parse((await fakeKv.get("settings:provider:workers-ai")) ?? "null");
+    expect(stored).toMatchObject({ enabled: false, apiKey: "cf-token" });
+  });
+
+  test("PATCH rejects name, baseUrl and model changes", async () => {
+    const rename = await PATCH(patchRequest("workers-ai", { name: "Hijacked" }), {
+      params: params("workers-ai"),
+    });
+    expect(rename.status).toBe(400);
+
+    const baseUrl = await PATCH(
+      patchRequest("workers-ai", { baseUrl: "https://example.com/v1" }),
+      { params: params("workers-ai") },
+    );
+    expect(baseUrl.status).toBe(400);
+
+    const models = await PATCH(patchRequest("workers-ai", { models: ["@cf/x/y"] }), {
+      params: params("workers-ai"),
+    });
+    expect(models.status).toBe(400);
+    expect(await fakeKv.get("settings:provider:workers-ai")).toBeNull();
+  });
+
+  test("DELETE is refused and keeps the built-in entry", async () => {
+    const response = await DELETE(deleteRequest("workers-ai"), {
+      params: params("workers-ai"),
+    });
+    expect(response.status).toBe(400);
+    expect(await fakeKv.get("settings:provider:workers-ai")).toBeNull();
+  });
+});
+
 describe("DELETE /api/admin/providers/[id]", () => {
   test("removes the provider", async () => {
     await seedProvider();
