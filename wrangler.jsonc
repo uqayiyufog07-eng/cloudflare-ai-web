@@ -7,6 +7,15 @@
 		"nodejs_compat",
 		"global_fetch_strictly_public"
 	],
+	"routes": [
+		{
+			// The account's workers.dev subdomain routing is currently broken
+			// (every worker errors at the edge), so traffic is served via a
+			// custom domain instead.
+			"pattern": "ai.laoqian303.top",
+			"custom_domain": true
+		}
+	],
 	"assets": {
 		"directory": ".open-next/assets",
 		"binding": "ASSETS"
