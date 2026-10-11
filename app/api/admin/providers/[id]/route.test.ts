@@ -240,6 +240,68 @@ describe("the built-in Workers AI provider", () => {
     expect(stored).toMatchObject({ enabled: false, apiKey: "cf-token" });
   });
 
+  test("PATCH stores the hidden-models denylist and dedupes it", async () => {
+    const response = await PATCH(
+      patchRequest("workers-ai", {
+        hiddenModels: ["@cf/a/model", "@cf/a/model", "@cf/b/model"],
+      }),
+      { params: params("workers-ai") },
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { provider: CustomProvider };
+    expect(body.provider.hiddenModels).toEqual(["@cf/a/model", "@cf/b/model"]);
+
+    const stored = JSON.parse((await fakeKv.get("settings:provider:workers-ai")) ?? "null");
+    expect(stored.hiddenModels).toEqual(["@cf/a/model", "@cf/b/model"]);
+  });
+
+  test("PATCH clears the hidden-models denylist with null", async () => {
+    await fakeKv.put(
+      "settings:provider:workers-ai",
+      JSON.stringify({
+        id: "workers-ai",
+        name: "Cloudflare Workers AI",
+        style: "workers-ai",
+        enabled: true,
+        apiKey: "cf-token",
+        hiddenModels: ["@cf/a/model"],
+      }),
+    );
+
+    const response = await PATCH(patchRequest("workers-ai", { hiddenModels: null }), {
+      params: params("workers-ai"),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { provider: CustomProvider };
+    expect(body.provider.hiddenModels).toBeUndefined();
+    const stored = JSON.parse((await fakeKv.get("settings:provider:workers-ai")) ?? "null");
+    expect(stored.hiddenModels).toBeUndefined();
+  });
+
+  test("PATCH rejects a hidden-models list longer than 1000", async () => {
+    const hiddenModels = Array.from({ length: 1001 }, (_, index) => `@cf/x/model-${index}`);
+    const response = await PATCH(patchRequest("workers-ai", { hiddenModels }), {
+      params: params("workers-ai"),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await fakeKv.get("settings:provider:workers-ai")).toBeNull();
+  });
+
+  test("PATCH rejects hiddenModels on a custom provider", async () => {
+    await seedProvider();
+
+    const response = await PATCH(patchRequest("relay", { hiddenModels: ["gpt-x"] }), {
+      params: params("relay"),
+    });
+
+    expect(response.status).toBe(400);
+    const stored = JSON.parse((await fakeKv.get("settings:provider:relay")) ?? "{}");
+    expect(stored.hiddenModels).toBeUndefined();
+  });
+
   test("PATCH rejects name, baseUrl and model changes", async () => {
     const rename = await PATCH(patchRequest("workers-ai", { name: "Hijacked" }), {
       params: params("workers-ai"),

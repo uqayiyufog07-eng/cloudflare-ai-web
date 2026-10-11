@@ -1,5 +1,5 @@
 import { expect, mock, test } from "bun:test";
-import { getModelCatalog, hasSignal } from "@/lib/model-catalog";
+import { getCatalogModel, getModelCatalog, hasSignal } from "@/lib/model-catalog";
 
 class FakeKv {
   store = new Map<string, string>();
@@ -169,6 +169,64 @@ test("hides every Workers AI model when the built-in service is disabled", async
     const catalog = await getModelCatalog();
     expect(catalog.some((model) => model.provider === "workers-ai")).toBe(false);
     expect(upstreamCalled).toBe(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.CF_ACCOUNT_ID;
+    delete process.env.CF_WORKERS_AI_TOKEN;
+  }
+});
+
+test("filters hidden Workers AI models out of the catalog and direct lookups", async () => {
+  fakeKv = new FakeKv();
+  contextRef.env = { API_KEYS: fakeKv };
+  await fakeKv.put(
+    "settings:provider:workers-ai",
+    JSON.stringify({
+      id: "workers-ai",
+      name: "Cloudflare Workers AI",
+      style: "workers-ai",
+      enabled: true,
+      apiKey: "",
+      // The chat model is pruned; the image model must remain available.
+      hiddenModels: ["@cf/test/chat"],
+    }),
+  );
+
+  process.env.CF_ACCOUNT_ID = "test-account";
+  process.env.CF_WORKERS_AI_TOKEN = "test-token";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    const task = url.searchParams.get("task") ?? "Text Generation";
+    const name = task === "Text Generation" ? "@cf/test/chat" : "@cf/test/image";
+    return Response.json({
+      success: true,
+      result: [
+        {
+          id: name,
+          source: 1,
+          name,
+          description: "Test model",
+          task: { id: task, name: task, description: "Test task" },
+          tags: [],
+          properties: [],
+        },
+      ],
+      result_info: { page: 1, per_page: 100, count: 1, total_count: 1 },
+    });
+  }) as unknown as typeof fetch;
+
+  try {
+    const catalog = await getModelCatalog();
+    expect(catalog.find((model) => model.id === "@cf/test/chat")).toBeUndefined();
+    expect(catalog.find((model) => model.id === "@cf/test/image")).toMatchObject({
+      type: "Text to Image",
+    });
+
+    // A pruned model cannot be resolved even when called directly.
+    expect(await getCatalogModel("@cf/test/chat", "Text Generation", "workers-ai")).toBeUndefined();
+    const image = await getCatalogModel("@cf/test/image", "Text to Image", "workers-ai");
+    expect(image?.id).toBe("@cf/test/image");
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.CF_ACCOUNT_ID;

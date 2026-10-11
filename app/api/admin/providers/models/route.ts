@@ -1,7 +1,8 @@
 import * as v from "valibot";
 import { requireAdmin } from "@/lib/auth";
-import { probeWorkersAiCredentials } from "@/lib/model-catalog";
+import { listWorkersAiCatalogModels, probeWorkersAiCredentials } from "@/lib/model-catalog";
 import { fetchUpstreamModelIds } from "@/lib/provider-models";
+import { ProviderConfigurationError } from "@/lib/providers";
 import {
   getCustomProvider,
   PROVIDER_ID_PATTERN,
@@ -36,6 +37,33 @@ const probeSchema = v.object({
   apiKey: v.optional(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(512))),
   baseUrl: v.optional(httpUrl),
 });
+
+/**
+ * Returns the full Cloudflare Workers AI catalog (chat + image) for the
+ * built-in service's model manager. The hidden-models denylist is not applied
+ * here so the admin UI can show both visible and removed models; credentials
+ * follow the same KV-token-first, deployment-secret-fallback resolution.
+ */
+export async function GET(request: Request) {
+  const denied = await requireAdmin(request);
+  if (denied) {
+    return denied;
+  }
+
+  try {
+    const models = await listWorkersAiCatalogModels();
+    return Response.json({
+      models: models.map((model) => ({ id: model.id, type: model.type })),
+    });
+  } catch (error) {
+    if (error instanceof ProviderConfigurationError) {
+      const status = error.message.includes("CF_ACCOUNT_ID") ? 503 : 400;
+      return new Response(error.message, { status });
+    }
+    const message = error instanceof Error ? error.message : "unknown error";
+    return new Response(`Failed to load the Workers AI catalog: ${message}`, { status: 502 });
+  }
+}
 
 export async function POST(request: Request) {
   const denied = await requireAdmin(request);

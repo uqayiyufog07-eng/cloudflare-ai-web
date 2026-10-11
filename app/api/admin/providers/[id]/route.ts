@@ -36,20 +36,23 @@ const httpUrl = v.pipe(
   }, "Must be a valid http(s) URL"),
 );
 
+const modelIdList = v.union([
+  v.pipe(
+    v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(MAX_MODEL_ID_LENGTH))),
+    v.maxLength(MAX_PROVIDER_MODELS),
+  ),
+  v.null(),
+]);
+
 const patchProviderSchema = v.object({
   name: v.optional(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(64))),
   enabled: v.optional(v.boolean()),
   apiKey: v.optional(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(512))),
   baseUrl: v.optional(v.union([httpUrl, v.null()])),
-  models: v.optional(
-    v.union([
-      v.pipe(
-        v.array(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(MAX_MODEL_ID_LENGTH))),
-        v.maxLength(MAX_PROVIDER_MODELS),
-      ),
-      v.null(),
-    ]),
-  ),
+  models: v.optional(modelIdList),
+  // Used only by the built-in Workers AI service to prune its auto-synced
+  // catalog; custom providers manage their whitelist through `models`.
+  hiddenModels: v.optional(modelIdList),
 });
 
 const notConfiguredResponse = () =>
@@ -89,13 +92,22 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const data = parsed.data;
 
   // The built-in Workers AI service has a fixed identity and an automatically
-  // synced Cloudflare catalog; only the enable switch and API token change.
+  // synced Cloudflare catalog: only the enable switch, API token and the
+  // hidden-models denylist can change.
   if (
     isBuiltinProvider(id) &&
     (data.name !== undefined || data.baseUrl !== undefined || data.models !== undefined)
   ) {
     return new Response(
-      "Only the enabled flag and API key can be changed for the built-in Cloudflare Workers AI service.",
+      "Only the enabled flag, API key and hidden models can be changed for the built-in Cloudflare Workers AI service.",
+      { status: 400 },
+    );
+  }
+
+  // The hidden-models denylist belongs exclusively to the built-in service.
+  if (!isBuiltinProvider(id) && data.hiddenModels !== undefined) {
+    return new Response(
+      "hiddenModels can only be set for the built-in Cloudflare Workers AI service.",
       { status: 400 },
     );
   }
@@ -136,6 +148,14 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       delete updated.models;
     } else {
       updated.models = deduped;
+    }
+  }
+  if (data.hiddenModels !== undefined) {
+    const deduped = data.hiddenModels === null ? [] : [...new Set(data.hiddenModels)];
+    if (deduped.length === 0) {
+      delete updated.hiddenModels;
+    } else {
+      updated.hiddenModels = deduped;
     }
   }
 

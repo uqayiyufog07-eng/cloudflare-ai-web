@@ -25,6 +25,12 @@ export interface CustomProvider {
   apiKey: string;
   baseUrl?: string;
   models?: string[];
+  /**
+   * Catalog ids hidden from the built-in Workers AI service only. Its catalog
+   * is synced wholesale from Cloudflare, so removals are stored as a denylist
+   * (new upstream models still appear automatically) and can be restored.
+   */
+  hiddenModels?: string[];
   createdAt: string;
 }
 
@@ -128,11 +134,14 @@ const toProvider = (value: string): CustomProvider | null => {
 
     // The built-in Workers AI service is configured entirely through its
     // token/enable switch; id/name are fixed and baseUrl/models do not apply.
+    // hiddenModels carries the catalog ids removed on /admin.
     if (record.style === "workers-ai") {
+      const hidden = toStringArray(record.hiddenModels);
       return {
         ...WORKERS_AI_DEFAULT_PROVIDER,
         enabled: record.enabled !== false,
         apiKey: record.apiKey,
+        ...(hidden ? { hiddenModels: [...new Set(hidden)].slice(0, MAX_PROVIDER_MODELS) } : {}),
         ...(typeof record.createdAt === "string" && record.createdAt
           ? { createdAt: record.createdAt }
           : {}),

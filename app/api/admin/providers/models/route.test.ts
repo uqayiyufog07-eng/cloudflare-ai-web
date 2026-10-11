@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { POST } from "@/app/api/admin/providers/models/route";
+import { GET, POST } from "@/app/api/admin/providers/models/route";
 import { createSessionToken, getAdminCookieName } from "@/lib/auth";
 
 const ADMIN_PASSWORD = "admin-secret";
@@ -274,5 +274,112 @@ describe("POST /api/admin/providers/models for the built-in Workers AI service",
 
     process.env.CF_ACCOUNT_ID = originalAccountId;
     process.env.CF_WORKERS_AI_TOKEN = originalToken;
+  });
+});
+
+describe("GET /api/admin/providers/models for the built-in Workers AI service", () => {
+  const originalAccountId = process.env.CF_ACCOUNT_ID;
+  const originalToken = process.env.CF_WORKERS_AI_TOKEN;
+
+  const getRequest = () =>
+    new Request("https://example.com/api/admin/providers/models", {
+      method: "GET",
+      headers: { cookie: `${getAdminCookieName()}=${adminCookie}` },
+    });
+
+  const mockCatalogFetch = () => {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      const task = url.searchParams.get("task") ?? "Text Generation";
+      const name = task === "Text Generation" ? "@cf/test/chat" : "@cf/test/image";
+      return new Response(
+        JSON.stringify({
+          success: true,
+          result: [
+            {
+              id: name,
+              source: 1,
+              name,
+              description: "Test model",
+              task: { id: task, name: task, description: "Test task" },
+              tags: [],
+              properties: [],
+            },
+          ],
+          result_info: { page: 1, per_page: 100, count: 1, total_count: 1 },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+  };
+
+  test("returns 401 without an admin cookie", async () => {
+    const response = await GET(
+      new Request("https://example.com/api/admin/providers/models", { method: "GET" }),
+    );
+    expect(response.status).toBe(401);
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  test("returns the full chat and image catalog", async () => {
+    process.env.CF_ACCOUNT_ID = "account-123";
+    process.env.CF_WORKERS_AI_TOKEN = "env-token";
+    mockCatalogFetch();
+
+    try {
+      const response = await GET(getRequest());
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        models: [
+          { id: "@cf/test/chat", type: "Text Generation" },
+          { id: "@cf/test/image", type: "Text to Image" },
+        ],
+      });
+    } finally {
+      process.env.CF_ACCOUNT_ID = originalAccountId;
+      process.env.CF_WORKERS_AI_TOKEN = originalToken;
+    }
+  });
+
+  test("returns 400 when no token is available", async () => {
+    process.env.CF_ACCOUNT_ID = "account-123";
+    delete process.env.CF_WORKERS_AI_TOKEN;
+
+    try {
+      const response = await GET(getRequest());
+      expect(response.status).toBe(400);
+      expect(fetchCalls).toHaveLength(0);
+    } finally {
+      process.env.CF_ACCOUNT_ID = originalAccountId;
+      process.env.CF_WORKERS_AI_TOKEN = originalToken;
+    }
+  });
+
+  test("returns 503 when CF_ACCOUNT_ID is missing", async () => {
+    delete process.env.CF_ACCOUNT_ID;
+    process.env.CF_WORKERS_AI_TOKEN = "env-token";
+
+    try {
+      const response = await GET(getRequest());
+      expect(response.status).toBe(503);
+      expect(fetchCalls).toHaveLength(0);
+    } finally {
+      process.env.CF_ACCOUNT_ID = originalAccountId;
+      process.env.CF_WORKERS_AI_TOKEN = originalToken;
+    }
+  });
+
+  test("returns 502 when Cloudflare rejects the request", async () => {
+    process.env.CF_ACCOUNT_ID = "account-123";
+    process.env.CF_WORKERS_AI_TOKEN = "env-token";
+    fetchResponse = () => new Response("Unauthorized", { status: 401 });
+
+    try {
+      const response = await GET(getRequest());
+      expect(response.status).toBe(502);
+    } finally {
+      process.env.CF_ACCOUNT_ID = originalAccountId;
+      process.env.CF_WORKERS_AI_TOKEN = originalToken;
+    }
   });
 });

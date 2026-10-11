@@ -275,8 +275,16 @@ export const getModelCatalog = async (): Promise<Model[]> => {
     getTaskModels("Text-to-Image", workersAiEnabled),
   ]);
 
+  // Models removed on /admin stay out of the catalog; the denylist is applied
+  // after the cached fetch so changes take effect immediately.
+  const hiddenWorkersAiModels = new Set(workersAiProvider?.hiddenModels ?? []);
+  const visibleWorkersAiModels = (models: Model[]) =>
+    models.filter((model) => !hiddenWorkersAiModels.has(model.id));
+  const visibleChatModels = visibleWorkersAiModels(chatModels);
+  const visibleImageModels = visibleWorkersAiModels(imageModels);
+
   if (!customProviders) {
-    return [...chatModels, ...imageModels, ...getExternalModels()];
+    return [...visibleChatModels, ...visibleImageModels, ...getExternalModels()];
   }
 
   const upstreamLists = await Promise.all(
@@ -294,7 +302,7 @@ export const getModelCatalog = async (): Promise<Model[]> => {
     }
   }
 
-  return [...chatModels, ...imageModels, ...external];
+  return [...visibleChatModels, ...visibleImageModels, ...external];
 };
 
 /**
@@ -382,5 +390,25 @@ export const getCatalogModel = async (id: string, type: ModelType, provider: Mod
 
   const task: CloudflareTask = type === "Text Generation" ? "Text Generation" : "Text-to-Image";
   const models = await getTaskModels(task, configured?.enabled ?? true);
-  return models.find((model) => model.id === id);
+  const model = models.find((entry) => entry.id === id);
+  // Hidden models must also be rejected when called directly through the API.
+  if (model && configured?.hiddenModels?.includes(id)) {
+    return undefined;
+  }
+  return model;
+};
+
+/**
+ * Fetches the full Workers AI catalog (chat + image) for the admin console,
+ * ignoring the enable switch and the hidden-models denylist. Unlike the
+ * cached catalog path this throws on missing credentials or upstream errors
+ * so the admin UI can surface actionable messages.
+ */
+export const listWorkersAiCatalogModels = async (): Promise<Model[]> => {
+  const credentials = await getCloudflareCredentials();
+  const [chatModels, imageModels] = await Promise.all([
+    fetchTaskModels("Text Generation", credentials),
+    fetchTaskModels("Text-to-Image", credentials),
+  ]);
+  return [...chatModels, ...imageModels];
 };

@@ -184,6 +184,42 @@ describe("with a KV namespace", () => {
     });
   });
 
+  test("persists the hidden-models denylist for the built-in service", async () => {
+    await fakeKv.put(
+      "settings:provider:workers-ai",
+      JSON.stringify({
+        id: "workers-ai",
+        name: "Cloudflare Workers AI",
+        style: "workers-ai",
+        enabled: true,
+        apiKey: "cf-token",
+        hiddenModels: ["@cf/a/model", "@cf/a/model", " ", 42, "@cf/b/model"],
+      }),
+    );
+
+    expect(await getCustomProvider("workers-ai")).toEqual({
+      ...WORKERS_AI_DEFAULT_PROVIDER,
+      apiKey: "cf-token",
+      hiddenModels: ["@cf/a/model", "@cf/b/model"],
+    });
+  });
+
+  test("ignores a malformed hidden-models value", async () => {
+    await fakeKv.put(
+      "settings:provider:workers-ai",
+      JSON.stringify({
+        id: "workers-ai",
+        name: "Cloudflare Workers AI",
+        style: "workers-ai",
+        enabled: true,
+        apiKey: "",
+        hiddenModels: "not-a-list",
+      }),
+    );
+
+    expect(await getCustomProvider("workers-ai")).toEqual({ ...WORKERS_AI_DEFAULT_PROVIDER });
+  });
+
   test("a malformed stored Workers AI entry self-heals to the defaults", async () => {
     await fakeKv.put("settings:provider:workers-ai", "not-json");
     expect(await getCustomProvider("workers-ai")).toEqual({ ...WORKERS_AI_DEFAULT_PROVIDER });

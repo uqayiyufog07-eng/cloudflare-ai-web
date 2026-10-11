@@ -10,6 +10,9 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  ImageIcon,
+  ListChecks,
+  MessageSquare,
   Plus,
   RefreshCw,
   Search,
@@ -39,7 +42,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ModelLogo } from "@/components/model-logo";
 import { DEFAULT_BASE_URLS } from "@/lib/provider-models";
-import type { Model } from "@/lib/models";
+import { getModelBrand, getModelName, type Model, type ModelType } from "@/lib/models";
 import type { CustomProvider, ProviderStyle } from "@/lib/provider-settings";
 import { toast } from "@/components/ui/toast";
 
@@ -50,7 +53,20 @@ type ProviderPatch = {
   apiKey?: string;
   baseUrl?: string | null;
   models?: string[] | null;
+  hiddenModels?: string[] | null;
 };
+
+/** Minimal catalog entry returned by GET /api/admin/providers/models. */
+type CatalogItem = { id: string; type: ModelType };
+
+const asWorkersModel = (id: string, type: ModelType): Model => ({
+  id,
+  name: getModelName(id),
+  brand: getModelBrand(id),
+  type,
+  provider: "workers-ai",
+  source: "cloudflare",
+});
 
 const STYLE_LABEL: Record<ProviderStyle, string> = {
   openai: "OpenAI",
@@ -328,8 +344,9 @@ function Switch({
 
 /**
  * Detail panel for the built-in Cloudflare Workers AI service. Its model
- * catalog (chat + image) is synced directly from Cloudflare, so the only
- * settings are the enable switch and the API token.
+ * catalog (chat + image) is synced directly from Cloudflare; the admin can
+ * prune individual models (stored as a hidden-models denylist in KV) and
+ * restore them later, without breaking automatic sync of new models.
  */
 function WorkersAiDetail({
   provider,
@@ -343,10 +360,48 @@ function WorkersAiDetail({
   const [apiKeyDraft, setApiKeyDraft] = useState(provider.apiKey);
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+  const [catalogStatus, setCatalogStatus] = useState<
+    "loading" | "ready" | "no-token" | "no-account" | "error"
+  >("loading");
+  const [refreshing, setRefreshing] = useState(false);
+  const [catalogQuery, setCatalogQuery] = useState("");
+  const [manageOpen, setManageOpen] = useState(false);
+  const [savingHidden, setSavingHidden] = useState(false);
 
   useEffect(() => {
     setApiKeyDraft(provider.apiKey);
   }, [provider.id, provider.apiKey]);
+
+  const loadCatalog = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const response = await fetch("/api/admin/providers/models");
+      if (response.status === 400) {
+        setCatalogStatus("no-token");
+        return;
+      }
+      if (response.status === 503) {
+        setCatalogStatus("no-account");
+        return;
+      }
+      if (!response.ok) {
+        setCatalogStatus("error");
+        return;
+      }
+      const body = (await response.json()) as { models: CatalogItem[] };
+      setCatalogItems(body.models ?? []);
+      setCatalogStatus("ready");
+    } catch {
+      setCatalogStatus("error");
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
 
   const probe = async (): Promise<boolean> => {
     const response = await fetch("/api/admin/providers/models", {
@@ -385,6 +440,7 @@ function WorkersAiDetail({
           title: "Cloudflare Workers AI 连接正常，对话与图片模型目录将自动同步。",
           type: "success",
         });
+        void loadCatalog();
       }
     } finally {
       setBusy(false);
@@ -397,6 +453,50 @@ function WorkersAiDetail({
       void onPatch({ apiKey: value });
     } else {
       setApiKeyDraft(provider.apiKey);
+    }
+  };
+
+  const hiddenModels = useMemo(
+    () => new Set(provider.hiddenModels ?? []),
+    [provider.hiddenModels],
+  );
+
+  const keyword = catalogQuery.trim().toLowerCase();
+  const visibleItems = useMemo(
+    () =>
+      catalogItems.filter(
+        (item) =>
+          !hiddenModels.has(item.id) &&
+          (!keyword || item.id.toLowerCase().includes(keyword)),
+      ),
+    [catalogItems, hiddenModels, keyword],
+  );
+  const chatItems = visibleItems.filter((item) => item.type === "Text Generation");
+  const imageItems = visibleItems.filter((item) => item.type === "Text to Image");
+
+  const hideModel = async (modelId: string) => {
+    if (hiddenModels.has(modelId)) {
+      return;
+    }
+    await onPatch({ hiddenModels: [...hiddenModels, modelId] });
+  };
+
+  const saveHiddenModels = async (ids: string[]) => {
+    setSavingHidden(true);
+    try {
+      const saved = await onPatch({ hiddenModels: ids.length > 0 ? ids : null });
+      if (saved) {
+        setManageOpen(false);
+        toast.add({
+          title:
+            ids.length > 0
+              ? `已隐藏 ${ids.length} 个模型，其他模型保持可见。`
+              : "已恢复显示全部模型。",
+          type: "success",
+        });
+      }
+    } finally {
+      setSavingHidden(false);
     }
   };
 
@@ -473,10 +573,110 @@ function WorkersAiDetail({
           </p>
         </div>
 
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium">模型目录</h3>
+            <span className="text-muted-foreground text-xs">
+              {catalogStatus === "ready"
+                ? `显示 ${catalogItems.length - hiddenModels.size} / ${catalogItems.length} 个${
+                    hiddenModels.size > 0 ? `，已隐藏 ${hiddenModels.size}` : ""
+                  }`
+                : "Cloudflare 自动同步，可随时删减"}
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void loadCatalog()}
+                disabled={refreshing}
+              >
+                <RefreshCw aria-hidden className={refreshing ? "animate-spin" : undefined} />
+                {refreshing ? "同步中..." : "刷新"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setManageOpen(true)}
+                disabled={catalogStatus === "loading"}
+              >
+                <ListChecks aria-hidden />
+                管理模型
+              </Button>
+            </div>
+          </div>
+
+          {catalogStatus === "loading" ? (
+            <p className="text-muted-foreground rounded-lg ring-1 ring-border/50 px-3 py-4 text-xs">
+              正在从 Cloudflare 同步模型目录...
+            </p>
+          ) : catalogStatus === "no-token" ? (
+            <div className="space-y-2 rounded-lg ring-1 ring-border/50 px-3 py-4">
+              <p className="text-muted-foreground text-xs">
+                尚未配置 Workers AI API 令牌：请在上方填写令牌并保存，点击「检测」通过后即可查看与删减模型。
+              </p>
+              <Button variant="outline" size="sm" onClick={() => void loadCatalog()}>
+                重新加载
+              </Button>
+            </div>
+          ) : catalogStatus === "no-account" ? (
+            <p className="text-muted-foreground rounded-lg ring-1 ring-border/50 px-3 py-4 text-xs">
+              当前部署缺少 CF_ACCOUNT_ID，无法拉取 Workers AI 模型目录。
+            </p>
+          ) : catalogStatus === "error" ? (
+            <div className="space-y-2 rounded-lg ring-1 ring-border/50 px-3 py-4">
+              <p className="text-muted-foreground text-xs">
+                同步模型目录失败，请检查令牌权限与网络后重试。
+              </p>
+              <Button variant="outline" size="sm" onClick={() => void loadCatalog()}>
+                重试
+              </Button>
+            </div>
+          ) : catalogItems.length === 0 ? (
+            <p className="text-muted-foreground rounded-lg ring-1 ring-border/50 px-3 py-4 text-xs">
+              未从 Cloudflare 获取到模型，请确认令牌有效后点击「刷新」。
+            </p>
+          ) : visibleItems.length === 0 ? (
+            <p className="text-muted-foreground rounded-lg ring-1 ring-border/50 px-3 py-4 text-xs">
+              {keyword
+                ? "没有匹配的模型。"
+                : "所有模型均已隐藏，点击「管理模型」可恢复显示。"}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <div className="relative">
+                <Search
+                  aria-hidden
+                  className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+                />
+                <Input
+                  className="h-8 pl-8 text-xs"
+                  placeholder="搜索模型 ID..."
+                  value={catalogQuery}
+                  onChange={(event) => setCatalogQuery(event.target.value)}
+                />
+              </div>
+              <WorkersModelGroup
+                title="对话模型"
+                icon={MessageSquare}
+                items={chatItems}
+                onHide={hideModel}
+              />
+              <WorkersModelGroup
+                title="图片模型"
+                icon={ImageIcon}
+                items={imageItems}
+                onHide={hideModel}
+              />
+            </div>
+          )}
+        </div>
+
         <div className="max-w-2xl space-y-2 rounded-lg p-4 ring-1 ring-border/60">
           <h3 className="text-sm font-medium">关于 Cloudflare 免费 AI</h3>
           <ul className="text-muted-foreground list-disc space-y-1 pl-5 text-xs">
-            <li>对话与图片模型目录由 Cloudflare 官方自动同步，无需手动添加模型。</li>
+            <li>
+              对话与图片模型目录由 Cloudflare 官方自动同步；可随时删减不需要的模型，以后官方新增的模型仍会自动出现。
+            </li>
             <li>免费计划每天提供 10,000 neurons 额度（UTC 0 点重置），可调用 50+ 开源模型。</li>
             <li>关闭上方开关后，所有 Cloudflare 模型会立即从模型选择器中隐藏。</li>
             <li>
@@ -494,6 +694,83 @@ function WorkersAiDetail({
           </a>
         </div>
       </div>
+
+      <WorkersAiModelsDialog
+        open={manageOpen}
+        onOpenChange={(open) => {
+          setManageOpen(open);
+          if (!open) {
+            setSavingHidden(false);
+          }
+        }}
+        catalogItems={catalogItems}
+        hiddenIds={provider.hiddenModels ?? []}
+        saving={savingHidden}
+        onSave={saveHiddenModels}
+      />
+    </div>
+  );
+}
+
+function WorkersModelGroup({
+  title,
+  icon: Icon,
+  items,
+  onHide,
+}: {
+  title: string;
+  icon: typeof MessageSquare;
+  items: CatalogItem[];
+  onHide: (id: string) => Promise<void>;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg ring-1 ring-border/60">
+      <button
+        type="button"
+        onClick={() => setCollapsed((value) => !value)}
+        className="hover:bg-muted/50 flex w-full items-center gap-1.5 px-3 py-2 text-left text-sm font-medium"
+      >
+        {collapsed ? (
+          <ChevronRight aria-hidden className="size-4" />
+        ) : (
+          <ChevronDown aria-hidden className="size-4" />
+        )}
+        <Icon aria-hidden className="text-muted-foreground size-3.5" />
+        {title}
+        <span className="text-muted-foreground text-xs">{items.length}</span>
+      </button>
+      {!collapsed && (
+        <ul className="max-h-72 overflow-y-auto border-t">
+          {items.map((item) => (
+            <li key={item.id} className="group flex items-center gap-2.5 px-3 py-1.5">
+              <span className="flex size-4 items-center justify-center">
+                <ModelLogo model={asWorkersModel(item.id, item.type)} />
+              </span>
+              <span
+                className="min-w-0 flex-1 truncate font-mono text-xs"
+                title={item.id}
+              >
+                {item.id}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground size-7 opacity-0 group-hover:opacity-100"
+                title="从目录中隐藏（可在管理模型中恢复）"
+                onClick={() => void onHide(item.id)}
+              >
+                <Trash2 aria-hidden className="size-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -1211,6 +1488,221 @@ function SyncModelsDialog({
                 : selectedCount > 0
                   ? `保存选择（${selectedCount}）`
                   : "清空并使用上游全部"}
+            </Button>
+          </span>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Batch manager for the built-in Workers AI catalog. Checked models stay
+ * visible; unchecked ids are saved into the hidden-models denylist. Ids that
+ * were hidden previously but are absent from the latest Cloudflare catalog are
+ * listed separately ("上游未返回") so the denylist can be cleaned up.
+ */
+function WorkersAiModelsDialog({
+  open,
+  onOpenChange,
+  catalogItems,
+  hiddenIds,
+  saving,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  catalogItems: CatalogItem[];
+  hiddenIds: string[];
+  saving: boolean;
+  onSave: (hiddenIds: string[]) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | ModelType>("all");
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+
+  const entries = useMemo(() => {
+    const catalogIds = new Set(catalogItems.map((item) => item.id));
+    const orphans = hiddenIds.filter((id) => !catalogIds.has(id));
+    return [
+      ...catalogItems.map((item) => ({ id: item.id, type: item.type as ModelType, gone: false })),
+      ...orphans.map((id) => ({ id, type: undefined as ModelType | undefined, gone: true })),
+    ];
+  }, [catalogItems, hiddenIds]);
+
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setTypeFilter("all");
+      const hidden = new Set(hiddenIds);
+      setChecked(new Set(entries.filter((entry) => !hidden.has(entry.id)).map((e) => e.id)));
+    }
+  }, [open, entries, hiddenIds]);
+
+  const keyword = query.trim().toLowerCase();
+  const visible = useMemo(
+    () =>
+      entries.filter(
+        (entry) =>
+          (typeFilter === "all" || entry.type === typeFilter) &&
+          (!keyword || entry.id.toLowerCase().includes(keyword)),
+      ),
+    [entries, keyword, typeFilter],
+  );
+
+  const visibleCheckedCount = visible.reduce(
+    (count, entry) => count + (checked.has(entry.id) ? 1 : 0),
+    0,
+  );
+  const allVisibleChecked = visible.length > 0 && visibleCheckedCount === visible.length;
+  const visibleCount = entries.reduce(
+    (count, entry) => count + (checked.has(entry.id) ? 1 : 0),
+    0,
+  );
+
+  const toggle = (id: string) => {
+    setChecked((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleMany = (ids: string[], value: boolean) => {
+    setChecked((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        if (value) {
+          next.add(id);
+        } else {
+          next.delete(id);
+        }
+      }
+      return next;
+    });
+  };
+
+  const confirm = () => {
+    const nextHidden = entries.filter((entry) => !checked.has(entry.id)).map((entry) => entry.id);
+    void onSave(nextHidden);
+  };
+
+  const filterOptions: Array<{ value: "all" | ModelType; label: string }> = [
+    { value: "all", label: "全部" },
+    { value: "Text Generation", label: "对话" },
+    { value: "Text to Image", label: "图片" },
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>管理 Cloudflare 模型</DialogTitle>
+          <DialogDescription>
+            勾选要在模型选择器中显示的模型，取消勾选即从目录中删减；被删减的模型随时可以重新勾选恢复，不影响官方新模型自动出现。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-40 flex-1">
+            <Search
+              aria-hidden
+              className="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2"
+            />
+            <Input
+              className="pl-8"
+              placeholder="搜索模型 ID..."
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border p-0.5">
+            {filterOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                data-selected={typeFilter === option.value}
+                onClick={() => setTypeFilter(option.value)}
+                className="data-[selected=true]:bg-muted rounded-md px-2 py-1 text-xs"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={visible.length === 0}
+            onClick={() => toggleMany(visible.map((entry) => entry.id), !allVisibleChecked)}
+          >
+            {allVisibleChecked ? "清空当前结果" : "全选当前结果"}
+          </Button>
+        </div>
+
+        <div className="max-h-[46vh] min-h-32 overflow-y-auto rounded-lg ring-1 ring-border/60">
+          {visible.length === 0 ? (
+            <p className="text-muted-foreground px-3 py-6 text-center text-xs">没有匹配的模型</p>
+          ) : (
+            <ul className="divide-y">
+              {visible.map((entry) => {
+                const isChecked = checked.has(entry.id);
+                return (
+                  <li key={entry.id}>
+                    <button
+                      type="button"
+                      onClick={() => toggle(entry.id)}
+                      className="hover:bg-muted/50 flex w-full items-center gap-2.5 px-3 py-2 text-left"
+                    >
+                      <span
+                        aria-hidden
+                        className={`flex size-4 shrink-0 items-center justify-center rounded border ${
+                          isChecked
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-input bg-background"
+                        }`}
+                      >
+                        {isChecked && <Check className="size-3" />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs" title={entry.id}>
+                        {entry.id}
+                      </span>
+                      {entry.gone && (
+                        <Badge
+                          variant="outline"
+                          className="text-muted-foreground shrink-0 text-[10px]"
+                          title="该模型已被隐藏，但当前 Cloudflare 目录没有返回它；勾选可清除这条隐藏记录"
+                        >
+                          上游未返回
+                        </Badge>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <DialogFooter className="sm:justify-between">
+          <span className="text-muted-foreground text-xs">
+            显示中 {visibleCount} / {entries.length}
+          </span>
+          <span className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={saving}
+            >
+              取消
+            </Button>
+            <Button type="button" onClick={confirm} disabled={saving}>
+              {saving ? "保存中..." : "保存"}
             </Button>
           </span>
         </DialogFooter>
